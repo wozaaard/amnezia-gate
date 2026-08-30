@@ -161,6 +161,50 @@ Importer:
 - назначает свободные proxy ports, `/30` network slot и SELinux MCS category;
 - включает и запускает `amnezia-gate@PROFILE.service`.
 
+## Диагностика
+
+К отчёту об ошибке приложите версии пакетов, список профилей и состояние
+systemd units:
+
+```bash
+rpm -q amnezia-gate amnezia-gate-gnome
+amneziactl list
+systemctl --no-pager --full status \
+  amnezia-gate-daemon.service \
+  amnezia-gate-network.service \
+  'amnezia-gate@*.service'
+journalctl -b --no-pager \
+  -u amnezia-gate-daemon.service \
+  -u amnezia-gate-network.service \
+  -u 'amnezia-gate@*'
+```
+
+Для конкретного профиля вместо `PROFILE` укажите его имя:
+
+```bash
+amneziactl status PROFILE
+sudo /usr/libexec/amnezia-gate-profile logs PROFILE
+systemctl show "amnezia-gate@PROFILE.service" \
+  --property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus
+```
+
+Если профиль не стартует из-за сети или SELinux, дополнительно полезны:
+
+```bash
+sysctl net.ipv4.ip_forward
+ip -brief link | grep -E '^az[0-9]+h[[:space:]]'
+sudo nft list tables | grep amnezia_gate
+command -v iptables >/dev/null && sudo iptables -S FORWARD
+sudo semodule -l | grep '^amnezia_gate[[:space:]]'
+ls -lZ /usr/lib/amnezia-gate/rootfs.squashfs \
+  /usr/lib/amnezia-gate/images/*.squashfs
+command -v ausearch >/dev/null && sudo ausearch -m AVC,USER_AVC -ts boot
+```
+
+Не прикладывайте `/etc/amnezia/profiles/*/awg0.conf`: в этих файлах находятся
+private и preshared keys. Приведённые выше команды ключи не выводят; journal
+может содержать адрес VPN endpoint и имена профилей.
+
 ## Изоляция
 
 - nspawn payload работает как `container_t:s0:cN`, содержимое squashfs размечено
