@@ -1,0 +1,241 @@
+#!/usr/bin/python3
+
+import os
+import re
+import subprocess
+import tempfile
+
+import gi
+
+gi.require_version('Polkit', '1.0')
+from gi.repository import Gio, GLib, Polkit
+
+
+BUS_NAME = 'org.amnezia.Gate1'
+OBJECT_PATH = '/org/amnezia/Gate1'
+INTERFACE = 'org.amnezia.Gate1.Manager'
+ERROR_PREFIX = f'{BUS_NAME}.Error'
+PROFILE_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$')
+MAX_CONFIG_BYTES = 1024 * 1024
+
+TESTING = os.getenv('AMNEZIA_GATE_TESTING') == '1'
+BUS_TYPE = Gio.BusType.SESSION if os.getenv('AMNEZIA_GATE_BUS') == 'session' else Gio.BusType.SYSTEM
+PROFILE_ROOT = os.getenv('AMNEZIA_PROFILE_ROOT', '/etc/amnezia/profiles')
+BACKEND = os.getenv('AMNEZIA_GATE_PROFILE_BIN', '/usr/libexec/amnezia-gate-profile')
+SYSTEMCTL = os.getenv('SYSTEMCTL_BIN', '/usr/bin/systemctl')
+INTERFACE_FILE = os.getenv(
+    'AMNEZIA_GATE_INTERFACE_FILE',
+    '/usr/share/dbus-1/interfaces/org.amnezia.Gate1.xml',
+)
+
+
+def run(argv):
+    process = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if process.returncode != 0:
+        message = process.stderr.strip() or process.stdout.strip() or f'{argv[0]} failed'
+        raise RuntimeError(re.sub(r'^amnezia-gate-profile:\s*', '', message))
+    return process.stdout
+
+
+def validate_name(name):
+    if PROFILE_PATTERN.fullmatch(name) is None:
+        raise RuntimeError(
+            'profile name must be 1-32 characters, start with a letter or digit '
+            f'and contain only ASCII letters, digits, _ or -: {name}'
+        )
+
+
+def environment_value(text, name):
+    match = re.search(rf'^{re.escape(name)}=([0-9]+)$', text, re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f'{name} is missing from profile.env')
+    return int(match.group(1))
+
+
+class Manager:
+    def __init__(self):
+        self.authority = None if TESTING else Polkit.Authority.get_sync(None)
+        self.connection = None
+
+    def authorize(self, invocation, action):
+        if TESTING:
+            return
+        sender = invocation.get_sender()
+        if sender is None:
+            raise RuntimeError('D-Bus caller has no bus name')
+        subject = Polkit.SystemBusName.new(sender)
+        result = self.authority.check_authorization_sync(
+            subject,
+            action,
+            None,
+            Polkit.CheckAuthorizationFlags.ALLOW_USER_INTERACTION,
+            None,
+        )
+        if not result.get_is_authorized():
+            raise RuntimeError('not authorized')
+
+    def state(self, name):
+        try:
+            output = run([
+                SYSTEMCTL,
+                'show',
+                '--property=ActiveState',
+                '--property=SubState',
+                '--value',
+                f'amnezia-gate@{name}.service',
+            ]).strip().splitlines()
+            return output[0] if output else 'unknown', output[1] if len(output) > 1 else 'unknown'
+        except RuntimeError:
+            return 'unknown', 'unknown'
+
+    def profile(self, name):
+        validate_name(name)
+        env_path = os.path.join(PROFILE_ROOT, name, 'profile.env')
+        if not os.path.isfile(env_path):
+            raise RuntimeError(f'profile not found: {name}')
+        with open(env_path, encoding='utf-8') as env_file:
+            environment = env_file.read()
+        active, sub = self.state(name)
+        return (
+            name,
+            environment_value(environment, 'SOCKS_PORT'),
+            environment_value(environment, 'HTTP_PORT'),
+            active,
+            sub,
+        )
+
+    def profiles(self):
+        if not os.path.isdir(PROFILE_ROOT):
+            return []
+        profiles = []
+        with os.scandir(PROFILE_ROOT) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False) or PROFILE_PATTERN.fullmatch(entry.name) is None:
+                    continue
+                profiles.append(self.profile(entry.name))
+        return sorted(profiles, key=lambda profile: profile[0])
+
+    def changed(self):
+        self.connection.emit_signal(None, OBJECT_PATH, INTERFACE, 'Changed', None)
+
+    @staticmethod
+    def return_error(invocation, error):
+        message = str(error)
+        suffix = 'NotFound' if message.startswith('profile not found:') else 'Failed'
+        invocation.return_dbus_error(f'{ERROR_PREFIX}.{suffix}', message)
+
+    def mutate(self, invocation, action, argv):
+        try:
+            self.authorize(invocation, action)
+            validate_name(argv[2])
+            run(argv)
+            invocation.return_value(None)
+            self.changed()
+        except Exception as error:
+            self.return_error(invocation, error)
+
+    def handle_method_call(
+        self,
+        connection,
+        sender,
+        object_path,
+        interface_name,
+        method_name,
+        parameters,
+        invocation,
+    ):
+        del sender, object_path, interface_name
+        self.connection = connection
+        try:
+            arguments = parameters.unpack() if parameters is not None else ()
+            if method_name == 'ListProfiles':
+                invocation.return_value(GLib.Variant('(a(suuss))', (self.profiles(),)))
+            elif method_name == 'GetProfile':
+                invocation.return_value(GLib.Variant('((suuss))', (self.profile(arguments[0]),)))
+            elif method_name == 'ImportProfile':
+                name, configuration, replace = arguments
+                self.authorize(invocation, 'org.amnezia.gate.configure')
+                validate_name(name)
+                if len(configuration.encode('utf-8')) > MAX_CONFIG_BYTES:
+                    raise RuntimeError('configuration exceeds 1 MiB')
+                temporary_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        mode='w',
+                        encoding='utf-8',
+                        prefix='amnezia-gate-profile-',
+                        delete=False,
+                    ) as temporary:
+                        temporary.write(configuration)
+                        temporary_path = temporary.name
+                    argv = [BACKEND, 'import', temporary_path, '--name', name]
+                    if replace:
+                        argv.append('--replace')
+                    run(argv)
+                    profile = self.profile(name)
+                    invocation.return_value(GLib.Variant('((suuss))', (profile,)))
+                    self.changed()
+                finally:
+                    if temporary_path is not None:
+                        os.unlink(temporary_path)
+            elif method_name == 'RemoveProfile':
+                self.mutate(
+                    invocation,
+                    'org.amnezia.gate.configure',
+                    [BACKEND, 'remove', arguments[0], '--yes'],
+                )
+            elif method_name in ('StartProfile', 'StopProfile', 'RestartProfile'):
+                action = method_name.removesuffix('Profile').lower()
+                self.mutate(
+                    invocation,
+                    'org.amnezia.gate.control',
+                    [BACKEND, action, arguments[0]],
+                )
+            else:
+                raise RuntimeError(f'unknown method: {method_name}')
+        except Exception as error:
+            self.return_error(invocation, error)
+
+
+def main():
+    with open(INTERFACE_FILE, encoding='utf-8') as interface_file:
+        node_info = Gio.DBusNodeInfo.new_for_xml(interface_file.read())
+    interface_info = node_info.lookup_interface(INTERFACE)
+    manager = Manager()
+    loop = GLib.MainLoop()
+    name_acquired = False
+
+    def on_bus_acquired(connection, _name):
+        connection.register_object_with_closures2(
+            OBJECT_PATH,
+            interface_info,
+            manager.handle_method_call,
+            None,
+            None,
+        )
+
+    def on_name_acquired(_connection, _name):
+        nonlocal name_acquired
+        name_acquired = True
+
+    def on_name_lost(_connection, _name):
+        if not name_acquired:
+            print(f'could not own {BUS_NAME}', file=os.sys.stderr)
+        loop.quit()
+
+    owner_id = Gio.bus_own_name(
+        BUS_TYPE,
+        BUS_NAME,
+        Gio.BusNameOwnerFlags.NONE,
+        on_bus_acquired,
+        on_name_acquired,
+        on_name_lost,
+    )
+    try:
+        loop.run()
+    finally:
+        Gio.bus_unown_name(owner_id)
+
+
+if __name__ == '__main__':
+    main()

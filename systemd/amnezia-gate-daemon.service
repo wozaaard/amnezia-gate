@@ -1,0 +1,31 @@
+[Unit]
+Description=Amnezia proxy profile manager
+Documentation=https://github.com/amnezia-vpn/amneziawg-go
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.amnezia.Gate1
+ExecStart=/usr/libexec/amnezia-gate-daemon
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/amnezia
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

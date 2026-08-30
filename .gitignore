@@ -1,0 +1,9 @@
+/dist/
+/profiles/
+/_build/
+__pycache__/
+*.py[cod]
+*.conf
+!config/*.conf
+!dbus/*.conf
+!sysusers/*.conf

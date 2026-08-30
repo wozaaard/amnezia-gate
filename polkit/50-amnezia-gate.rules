@@ -1,0 +1,10 @@
+// Allow explicitly delegated users to manage Amnezia Gate without a password.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.amnezia.gate.control" ||
+         action.id == "org.amnezia.gate.configure") &&
+        subject.isInGroup("amnezia")) {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

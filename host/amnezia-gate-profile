@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}
+global_config=${AMNEZIA_PROFILE_CONFIG:-/etc/amnezia/profiles.conf}
+systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
+ss_bin=${SS_BIN:-ss}
+
+ROOTFS_IMAGE=/usr/lib/amnezia-gate/rootfs.squashfs
+NETWORK_PREFIX=10.231
+LISTEN_ADDRESS=0.0.0.0
+LAN_CIDRS=192.168.1.0/24
+FORWARD_COMPAT=auto
+SOCKS_PORT_BASE=1080
+HTTP_PORT_BASE=10080
+DNS_SERVERS=1.1.1.1,1.0.0.1
+
+die() {
+    printf 'amnezia-gate-profile: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Usage:
+  amnezia-gate-profile import CONFIG --name PROFILE [--replace] [--no-start]
+                         [--socks-port PORT] [--http-port PORT]
+  amnezia-gate-profile remove PROFILE --yes
+  amnezia-gate-profile start|stop|restart|status|logs PROFILE
+  amnezia-gate-profile list
+EOF
+}
+
+require_root() {
+    if [[ ${AMNEZIA_PROFILE_TESTING:-0} != 1 && $EUID -ne 0 ]]; then
+        die 'must be run as root'
+    fi
+}
+
+validate_profile() {
+    [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$ ]] ||
+        die "profile name must be 1-32 characters, start with a letter or digit and contain only ASCII letters, digits, _ or -: $1"
+}
+
+validate_port() {
+    [[ $1 =~ ^[0-9]+$ && $1 -ge 1024 && $1 -le 65535 ]] || die "invalid port: $1"
+}
+
+load_global_config() {
+    [[ -r "$global_config" ]] || return 0
+    # The file is administrator-owned configuration.
+    # shellcheck disable=SC1090
+    source "$global_config"
+}
+
+profile_value() {
+    local file=$1 key=$2
+    sed -n -E "s/^${key}=//p" "$file" | head -n 1
+}
+
+port_declared() {
+    local port=$1 file
+    shopt -s nullglob
+    for file in "$profile_root"/*/profile.env; do
+        grep -Eq "^(SOCKS_PORT|HTTP_PORT)=${port}$" "$file" && return 0
+    done
+    return 1
+}
+
+port_declared_by_other_profile() {
+    local port=$1 profile=$2 file owner
+    shopt -s nullglob
+    for file in "$profile_root"/*/profile.env; do
+        owner=${file%/profile.env}
+        owner=${owner##*/}
+        [[ $owner == "$profile" ]] && continue
+        grep -Eq "^(SOCKS_PORT|HTTP_PORT)=${port}$" "$file" && return 0
+    done
+    return 1
+}
+
+network_slot_declared() {
+    local slot=$1 file
+    shopt -s nullglob
+    for file in "$profile_root"/*/profile.env; do
+        grep -Eq "^NETWORK_SLOT=${slot}$" "$file" && return 0
+    done
+    return 1
+}
+
+allocate_network_slot() {
+    local slot
+    for ((slot = 0; slot < 1024; slot++)); do
+        if ! network_slot_declared "$slot"; then
+            printf '%s\n' "$slot"
+            return 0
+        fi
+    done
+    die 'no free profile network/MCS slot found'
+}
+
+validate_network_prefix() {
+    local prefix=$1 first second
+    [[ $prefix =~ ^([0-9]{1,3})\.([0-9]{1,3})$ ]] ||
+        die "NETWORK_PREFIX must contain the first two IPv4 octets: $prefix"
+    first=${BASH_REMATCH[1]}
+    second=${BASH_REMATCH[2]}
+    (( first <= 255 && second <= 255 )) || die "invalid NETWORK_PREFIX: $prefix"
+}
+
+validate_forward_compat() {
+    case $1 in
+        auto|none|iptables) ;;
+        *) die "FORWARD_COMPAT must be auto, none or iptables: $1" ;;
+    esac
+}
+
+port_listening() {
+    local port=$1
+    "$ss_bin" -H -ltn 2>/dev/null |
+        awk -v port="$port" '$4 ~ (":" port "$") { found = 1 } END { exit !found }'
+}
+
+port_available() {
+    ! port_declared "$1" && ! port_listening "$1"
+}
+
+port_available_for_profile() {
+    local port=$1 profile=$2 current_port=${3:-}
+    ! port_declared_by_other_profile "$port" "$profile" || return 1
+    ! port_listening "$port" || [[ -n "$current_port" && $port -eq $current_port ]]
+}
+
+allocate_ports() {
+    local offset socks http
+    for ((offset = 0; offset < 1000; offset++)); do
+        socks=$((SOCKS_PORT_BASE + offset))
+        http=$((HTTP_PORT_BASE + offset))
+        if port_available "$socks" && port_available "$http"; then
+            printf '%s %s\n' "$socks" "$http"
+            return 0
+        fi
+    done
+    die 'no free proxy port pair found'
+}
+
+validate_awg_config() {
+    local file=$1 interface_count peer_count
+    interface_count=$(grep -Eic '^[[:space:]]*\[Interface\][[:space:]]*$' "$file" || true)
+    peer_count=$(grep -Eic '^[[:space:]]*\[Peer\][[:space:]]*$' "$file" || true)
+    [[ $interface_count -eq 1 ]] || die 'config must contain exactly one [Interface] section'
+    [[ $peer_count -ge 1 ]] || die 'config must contain at least one [Peer] section'
+    grep -Eiq '^[[:space:]]*Address[[:space:]]*=' "$file" || die 'config has no Address'
+    grep -Eiq '^[[:space:]]*Endpoint[[:space:]]*=' "$file" || die 'config has no Endpoint'
+    awk '
+        BEGIN { IGNORECASE = 1 }
+        /^[[:space:]]*AllowedIPs[[:space:]]*=/ {
+            value = $0
+            sub(/^[^=]*=/, "", value)
+            sub(/[[:space:]]*#.*/, "", value)
+            count = split(value, cidrs, ",")
+            for (i = 1; i <= count; i++) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", cidrs[i])
+                if (cidrs[i] == "0.0.0.0/0") found = 1
+            }
+        }
+        END { exit !found }
+    ' "$file" ||
+        die 'proxy profile requires 0.0.0.0/0 in AllowedIPs'
+    if grep -Eiq '^[[:space:]]*(PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=' "$file"; then
+        die 'PreUp/PostUp/PreDown/PostDown/SaveConfig are forbidden in imported profiles'
+    fi
+}
+
+extract_dns() {
+    local file=$1 value
+    value=$(awk -F= '
+        BEGIN { IGNORECASE = 1 }
+        /^[[:space:]]*DNS[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "")
+            gsub(/[[:space:]]+/, "")
+            print
+            exit
+        }
+    ' "$file")
+    [[ -n "$value" ]] && printf '%s\n' "$value" || printf '%s\n' "$DNS_SERVERS"
+}
+
+sanitize_awg_config() {
+    local source=$1 target=$2
+    awk '
+        BEGIN { IGNORECASE = 1; in_interface = 0 }
+        /^[[:space:]]*\[/ {
+            if (in_interface) print "Table = off"
+            in_interface = ($0 ~ /^[[:space:]]*\[Interface\][[:space:]]*$/)
+            print
+            next
+        }
+        in_interface {
+            key = $0
+            sub(/=.*/, "", key)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            if (tolower(key) == "dns" || tolower(key) == "table") next
+        }
+        { print }
+        END { if (in_interface) print "Table = off" }
+    ' "$source" >"$target"
+}
+
+write_environment() {
+    local file=$1 profile=$2 socks=$3 http=$4 dns=$5 network_slot=$6
+    {
+        printf 'PROFILE_NAME=%q\n' "$profile"
+        printf 'ROOTFS_IMAGE=%q\n' "$ROOTFS_IMAGE"
+        printf 'NETWORK_PREFIX=%q\n' "$NETWORK_PREFIX"
+        printf 'NETWORK_SLOT=%q\n' "$network_slot"
+        printf 'LISTEN_ADDRESS=%q\n' "$LISTEN_ADDRESS"
+        printf 'LAN_CIDRS=%q\n' "$LAN_CIDRS"
+        printf 'FORWARD_COMPAT=%q\n' "$FORWARD_COMPAT"
+        printf 'SOCKS_PORT=%q\n' "$socks"
+        printf 'HTTP_PORT=%q\n' "$http"
+        printf 'DNS_SERVERS=%q\n' "$dns"
+    } >"$file"
+}
+
+import_profile() {
+    require_root
+    [[ $# -ge 1 ]] || die 'CONFIG is required'
+    local source=$1
+    shift
+    local profile= replace=0 no_start=0 socks_port= http_port=
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) [[ $# -ge 2 ]] || die '--name requires PROFILE'; profile=$2; shift 2 ;;
+            --replace) replace=1; shift ;;
+            --no-start) no_start=1; shift ;;
+            --socks-port) [[ $# -ge 2 ]] || die '--socks-port requires PORT'; socks_port=$2; shift 2 ;;
+            --http-port) [[ $# -ge 2 ]] || die '--http-port requires PORT'; http_port=$2; shift 2 ;;
+            *) die "unknown import option: $1" ;;
+        esac
+    done
+
+    [[ -f "$source" ]] || die "config not found: $source"
+    [[ -n "$profile" ]] || die 'import requires --name PROFILE'
+    validate_profile "$profile"
+    validate_awg_config "$source"
+    load_global_config
+
+    mkdir -p -m 0700 "$profile_root"
+    local target="$profile_root/$profile"
+    [[ ! -e "$target" || $replace -eq 1 ]] || die "profile already exists: $profile"
+
+    validate_network_prefix "$NETWORK_PREFIX"
+    validate_forward_compat "$FORWARD_COMPAT"
+
+    local old_env="$target/profile.env" old_socks_port= old_http_port= network_slot=
+    if [[ -e "$old_env" ]]; then
+        old_socks_port=$(profile_value "$old_env" SOCKS_PORT)
+        old_http_port=$(profile_value "$old_env" HTTP_PORT)
+        network_slot=$(profile_value "$old_env" NETWORK_SLOT)
+        [[ -n "$socks_port" ]] || socks_port=$old_socks_port
+        [[ -n "$http_port" ]] || http_port=$old_http_port
+    fi
+    if [[ -z "$socks_port" || -z "$http_port" ]]; then
+        read -r allocated_socks allocated_http < <(allocate_ports)
+        [[ -n "$socks_port" ]] || socks_port=$allocated_socks
+        [[ -n "$http_port" ]] || http_port=$allocated_http
+    fi
+    validate_port "$socks_port"
+    validate_port "$http_port"
+    [[ $socks_port -ne $http_port ]] || die 'SOCKS and HTTP ports must differ'
+    port_available_for_profile "$socks_port" "$profile" "$old_socks_port" ||
+        die "SOCKS port is already in use: $socks_port"
+    port_available_for_profile "$http_port" "$profile" "$old_http_port" ||
+        die "HTTP port is already in use: $http_port"
+    [[ -n "$network_slot" ]] || network_slot=$(allocate_network_slot)
+    [[ $network_slot =~ ^[0-9]+$ && $network_slot -lt 1024 ]] ||
+        die "invalid NETWORK_SLOT: $network_slot"
+
+    local tmp backup= dns
+    tmp=$(mktemp -d "$profile_root/.import.${profile}.XXXXXX")
+    trap 'rm -rf -- "$tmp"' RETURN
+    chmod 0700 "$tmp"
+    dns=$(extract_dns "$source")
+    sanitize_awg_config "$source" "$tmp/awg0.conf"
+    write_environment "$tmp/profile.env" "$profile" "$socks_port" "$http_port" "$dns" "$network_slot"
+    chmod 0600 "$tmp/awg0.conf" "$tmp/profile.env"
+
+    if [[ -e "$target" ]]; then
+        backup="$profile_root/.backup.${profile}.$$"
+        mv -- "$target" "$backup"
+    fi
+    mv -- "$tmp" "$target"
+    trap - RETURN
+
+    if (( ! no_start )); then
+        local action=enable
+        [[ -z "$backup" ]] || action=restart
+        if [[ $action == enable ]]; then
+            if ! "$systemctl_bin" enable --now "amnezia-gate@${profile}.service"; then
+                "$systemctl_bin" disable --now "amnezia-gate@${profile}.service" || true
+                rm -rf -- "$target"
+                [[ -z "$backup" ]] || mv -- "$backup" "$target"
+                die "failed to start profile: $profile"
+            fi
+        elif ! "$systemctl_bin" restart "amnezia-gate@${profile}.service"; then
+            rm -rf -- "$target"
+            mv -- "$backup" "$target"
+            "$systemctl_bin" restart "amnezia-gate@${profile}.service" || true
+            die "updated profile failed; previous configuration restored: $profile"
+        fi
+    fi
+
+    [[ -z "$backup" ]] || rm -rf -- "$backup"
+    printf '%s: SOCKS %s:%s, HTTP %s:%s\n' \
+        "$profile" "$LISTEN_ADDRESS" "$socks_port" "$LISTEN_ADDRESS" "$http_port"
+}
+
+remove_profile() {
+    require_root
+    local profile=${1:-} confirmation=${2:-}
+    validate_profile "$profile"
+    [[ $confirmation == --yes ]] || die 'remove requires --yes'
+    "$systemctl_bin" disable --now "amnezia-gate@${profile}.service" || true
+    local target="$profile_root/$profile"
+    [[ -d "$target" ]] || die "profile not found: $profile"
+    rm -rf -- "$target"
+}
+
+simple_systemctl() {
+    require_root
+    local action=$1 profile=${2:-}
+    validate_profile "$profile"
+    "$systemctl_bin" "$action" "amnezia-gate@${profile}.service"
+}
+
+list_profiles() {
+    local dir env profile socks http
+    shopt -s nullglob
+    printf '%-20s %-8s %-8s\n' PROFILE SOCKS HTTP
+    for dir in "$profile_root"/*; do
+        [[ -d "$dir" && -r "$dir/profile.env" ]] || continue
+        env="$dir/profile.env"
+        profile=${dir##*/}
+        socks=$(profile_value "$env" SOCKS_PORT)
+        http=$(profile_value "$env" HTTP_PORT)
+        printf '%-20s %-8s %-8s\n' "$profile" "$socks" "$http"
+    done
+}
+
+command=${1:-}
+[[ -n "$command" ]] || { usage; exit 1; }
+shift
+
+case "$command" in
+    import) import_profile "$@" ;;
+    remove) remove_profile "$@" ;;
+    start|stop|restart|status) simple_systemctl "$command" "$@" ;;
+    logs)
+        profile=${1:-}; validate_profile "$profile"
+        exec journalctl -u "amnezia-gate@${profile}.service" -f
+        ;;
+    list) list_profiles ;;
+    -h|--help|help) usage ;;
+    *) usage; die "unknown command: $command" ;;
+esac

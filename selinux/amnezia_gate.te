@@ -1,0 +1,11 @@
+module amnezia_gate 1.0;
+
+require {
+    type container_file_t;
+    type container_t;
+    class sock_file watch;
+}
+
+# amneziawg-go watches its UAPI socket and exits if the socket is removed.
+# MCS constraints still isolate sockets belonging to different profiles.
+allow container_t container_file_t:sock_file watch;

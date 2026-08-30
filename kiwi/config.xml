@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<image schemaversion="7.5" name="amnezia-gate-rootfs">
+    <description type="system">
+        <author>amnezia-gate maintainers</author>
+        <contact>https://build.opensuse.org/project/show/home:teksource:amneziawg</contact>
+        <specification>Minimal AmneziaWG proxy root filesystem for systemd-nspawn</specification>
+    </description>
+    <preferences>
+        <version>0.1.0</version>
+        <packagemanager>zypper</packagemanager>
+        <rpm-excludedocs>false</rpm-excludedocs>
+        <type image="squashfs" squashfscompression="zstd" selinux_policy="targeted"/>
+    </preferences>
+    <repository type="rpm-md">
+        <source path="obsrepositories:/"/>
+    </repository>
+    <packages type="bootstrap">
+        <package name="openSUSE-release"/>
+        <package name="bash"/>
+        <package name="ca-certificates"/>
+        <package name="container-selinux"/>
+        <package name="coreutils"/>
+        <package name="dante-server"/>
+        <package name="gawk"/>
+        <package name="grep"/>
+        <package name="iproute2"/>
+        <package name="policycoreutils"/>
+        <package name="selinux-policy-targeted"/>
+        <package name="tinyproxy"/>
+        <package name="amneziawg-go"/>
+        <package name="amneziawg-tools"/>
+    </packages>
+</image>

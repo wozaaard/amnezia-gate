@@ -1,0 +1,368 @@
+#!/usr/bin/gjs -m
+
+import Adw from 'gi://Adw?version=1';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
+import Gtk from 'gi://Gtk?version=4.0';
+
+const BUS_NAME = 'org.amnezia.Gate1';
+const OBJECT_PATH = '/org/amnezia/Gate1';
+const INTERFACE = 'org.amnezia.Gate1.Manager';
+const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+
+const GateApplication = GObject.registerClass(
+class GateApplication extends Adw.Application {
+    constructor() {
+        super({
+            application_id: 'org.amnezia.Gate',
+            flags: Gio.ApplicationFlags.DEFAULT_FLAGS,
+        });
+        this._window = null;
+        this._proxy = null;
+        this._profiles = new Map();
+        this._pending = new Map();
+    }
+
+    vfunc_activate() {
+        if (this._window !== null) {
+            this._window.present();
+            return;
+        }
+
+        this._buildWindow();
+        this._window.present();
+        try {
+            this._proxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SYSTEM,
+                Gio.DBusProxyFlags.NONE,
+                null,
+                BUS_NAME,
+                OBJECT_PATH,
+                INTERFACE,
+                null);
+            this._proxy.connect('g-signal', (_proxy, _sender, signal) => {
+                if (signal === 'Changed')
+                    this._refresh();
+            });
+            this._refresh();
+        } catch (error) {
+            this._showError(error);
+            this._showStatus('dialog-error-symbolic', 'Сервис недоступен',
+                'Не удалось подключиться к системному D-Bus service.');
+        }
+    }
+
+    _buildWindow() {
+        this._window = new Adw.ApplicationWindow({
+            application: this,
+            title: 'Amnezia Gate',
+            default_width: 680,
+            default_height: 520,
+        });
+
+        const header = new Adw.HeaderBar({
+            title_widget: new Adw.WindowTitle({
+                title: 'Amnezia Gate',
+                subtitle: 'Изолированные proxy-профили',
+            }),
+        });
+        const refresh = new Gtk.Button({
+            icon_name: 'view-refresh-symbolic',
+            tooltip_text: 'Обновить',
+        });
+        refresh.add_css_class('flat');
+        refresh.connect('clicked', () => this._refresh());
+        header.pack_start(refresh);
+
+        const importButton = new Gtk.Button({label: 'Импорт'});
+        importButton.add_css_class('suggested-action');
+        importButton.connect('clicked', () => this._chooseConfig());
+        header.pack_end(importButton);
+
+        this._list = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            margin_top: 24,
+            margin_bottom: 24,
+            margin_start: 18,
+            margin_end: 18,
+        });
+        this._list.add_css_class('boxed-list');
+
+        this._clamp = new Adw.Clamp({maximum_size: 720, tightening_threshold: 520});
+        this._clamp.set_child(this._list);
+        const scrolled = new Gtk.ScrolledWindow({
+            hscrollbar_policy: Gtk.PolicyType.NEVER,
+            vexpand: true,
+            child: this._clamp,
+        });
+
+        this._toolbar = new Adw.ToolbarView();
+        this._toolbar.add_top_bar(header);
+        this._toolbar.set_content(scrolled);
+
+        this._toasts = new Adw.ToastOverlay({child: this._toolbar});
+        this._window.set_content(this._toasts);
+    }
+
+    _call(method, parameters, onSuccess = null, onError = null) {
+        if (this._proxy === null)
+            return;
+        this._proxy.call(
+            method,
+            parameters,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            null,
+            (proxy, result) => {
+                try {
+                    const reply = proxy.call_finish(result).recursiveUnpack();
+                    onSuccess?.(reply);
+                } catch (error) {
+                    this._showError(error);
+                    onError?.();
+                }
+            });
+    }
+
+    _refresh() {
+        this._call(
+            'ListProfiles',
+            null,
+            ([profiles]) => this._render(profiles),
+            () => this._renderCurrent());
+    }
+
+    _renderCurrent() {
+        this._render([...this._profiles.values()]);
+    }
+
+    _render(profiles) {
+        for (let child = this._list.get_first_child(); child !== null;
+            child = this._list.get_first_child())
+            this._list.remove(child);
+
+        this._profiles = new Map(profiles.map(profile => [profile[0], profile]));
+        if (profiles.length === 0) {
+            this._showStatus('network-vpn-symbolic', 'Профилей пока нет',
+                'Импортируйте AmneziaWG-конфигурацию и задайте имя профиля.');
+            return;
+        }
+
+        this._clamp.set_child(this._list);
+        for (const [name, socks, http, active, sub] of profiles) {
+            const isActive = active === 'active';
+            const pending = this._pending.get(name);
+            const row = new Adw.ActionRow({
+                title: name,
+                subtitle: `SOCKS :${socks}  ·  HTTP :${http}  ·  ${pending ?? `${active}/${sub}`}`,
+            });
+
+            if (pending !== undefined) {
+                row.add_suffix(new Gtk.Spinner({
+                    spinning: true,
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: pending,
+                }));
+            } else if (isActive) {
+                const restart = this._actionButton(
+                    'view-refresh-symbolic',
+                    'Перезапустить',
+                    () => this._control('RestartProfile', name));
+                row.add_suffix(restart);
+            }
+            if (pending === undefined) {
+                const toggle = this._actionButton(
+                    isActive ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic',
+                    isActive ? 'Остановить' : 'Запустить',
+                    () => this._control(isActive ? 'StopProfile' : 'StartProfile', name));
+                row.add_suffix(toggle);
+
+                const remove = this._actionButton(
+                    'edit-delete-symbolic',
+                    'Удалить',
+                    () => this._confirmRemove(name));
+                remove.add_css_class('destructive-action');
+                row.add_suffix(remove);
+            }
+            this._list.append(row);
+        }
+    }
+
+    _showStatus(icon, title, description) {
+        const page = new Adw.StatusPage({icon_name: icon, title, description});
+        this._clamp.set_child(page);
+    }
+
+    _actionButton(icon, tooltip, callback) {
+        const button = new Gtk.Button({
+            icon_name: icon,
+            tooltip_text: tooltip,
+            valign: Gtk.Align.CENTER,
+        });
+        button.add_css_class('flat');
+        button.connect('clicked', callback);
+        return button;
+    }
+
+    _control(method, name) {
+        if (this._pending.has(name))
+            return;
+        const labels = {
+            StartProfile: 'Запуск…',
+            StopProfile: 'Остановка…',
+            RestartProfile: 'Перезапуск…',
+            RemoveProfile: 'Удаление…',
+        };
+        this._pending.set(name, labels[method]);
+        this._renderCurrent();
+        this._call(
+            method,
+            new GLib.Variant('(s)', [name]),
+            () => {
+                this._pending.delete(name);
+                if (method === 'RemoveProfile')
+                    this._showToast(`${name} удалён`);
+                this._refresh();
+            },
+            () => {
+                this._pending.delete(name);
+                this._renderCurrent();
+            });
+    }
+
+    _confirmRemove(name) {
+        if (this._pending.has(name))
+            return;
+
+        const dialog = new Adw.AlertDialog({
+            heading: `Удалить профиль ${name}?`,
+            body: 'Профиль будет остановлен, а его конфигурация удалена из системы.',
+        });
+        dialog.add_response('cancel', 'Отмена');
+        dialog.add_response('remove', 'Удалить');
+        dialog.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE);
+        dialog.set_default_response('cancel');
+        dialog.set_close_response('cancel');
+        dialog.connect('response', (_dialog, response) => {
+            if (response === 'remove')
+                this._control('RemoveProfile', name);
+        });
+        dialog.present(this._window);
+    }
+
+    _chooseConfig() {
+        const filter = new Gtk.FileFilter();
+        filter.set_name('AmneziaWG configuration');
+        filter.add_pattern('*.conf');
+        const filters = Gio.ListStore.new(Gtk.FileFilter);
+        filters.append(filter);
+        const dialog = new Gtk.FileDialog({
+            title: 'Импорт профиля',
+            filters,
+            default_filter: filter,
+        });
+        dialog.open(this._window, null, (source, result) => {
+            try {
+                const file = source.open_finish(result);
+                this._promptProfileName(file);
+            } catch (error) {
+                if (!error.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
+                    this._showError(error);
+            }
+        });
+    }
+
+    _promptProfileName(file) {
+        const basename = file.get_basename();
+        const suggestedName = basename.toLowerCase().endsWith('.conf')
+            ? basename.slice(0, -5)
+            : basename;
+
+        const entry = new Gtk.Entry({
+            text: suggestedName,
+            activates_default: true,
+            hexpand: true,
+        });
+        const validation = new Gtk.Label({
+            xalign: 0,
+            wrap: true,
+            visible: false,
+        });
+        validation.add_css_class('error');
+        const content = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 6,
+        });
+        content.append(entry);
+        content.append(validation);
+
+        const dialog = new Adw.AlertDialog({
+            heading: 'Имя профиля',
+            body: 'Имя используется в системе без преобразований.',
+            extra_child: content,
+        });
+        dialog.add_response('cancel', 'Отмена');
+        dialog.add_response('import', 'Импортировать');
+        dialog.set_response_appearance('import', Adw.ResponseAppearance.SUGGESTED);
+        dialog.set_default_response('import');
+        dialog.set_close_response('cancel');
+
+        const validate = () => {
+            const name = entry.get_text();
+            let message = '';
+            if (!PROFILE_PATTERN.test(name)) {
+                message = 'От 1 до 32 символов: латинские буквы, цифры, _ и -; первый символ — буква или цифра.';
+            } else if (this._profiles.has(name)) {
+                message = `Профиль ${name} уже существует.`;
+            }
+            validation.set_label(message);
+            validation.set_visible(message !== '');
+            dialog.set_response_enabled('import', message === '');
+        };
+        entry.connect('changed', validate);
+        dialog.connect('response', (_dialog, response) => {
+            if (response === 'import')
+                this._importFile(file, entry.get_text());
+        });
+        validate();
+        dialog.present(this._window);
+        entry.grab_focus();
+        entry.select_region(0, -1);
+    }
+
+    _importFile(file, name) {
+        const basename = file.get_basename();
+        try {
+            const [ok, contents] = file.load_contents(null);
+            if (!ok)
+                throw new Error(`Не удалось прочитать ${basename}`);
+            const configuration = new TextDecoder().decode(contents);
+            this._import(name, configuration);
+        } catch (error) {
+            this._showError(error);
+        }
+    }
+
+    _import(name, configuration) {
+        this._call('ImportProfile',
+            new GLib.Variant('(ssb)', [name, configuration, false]),
+            () => {
+                this._showToast(`${name} импортирован`);
+                this._refresh();
+            });
+    }
+
+    _showToast(message) {
+        this._toasts.add_toast(new Adw.Toast({title: message, timeout: 4}));
+    }
+
+    _showError(error) {
+        if (error instanceof Gio.DBusError)
+            Gio.DBusError.strip_remote_error(error);
+        this._showToast(error.message);
+    }
+});
+
+const application = new GateApplication();
+application.run(ARGV);

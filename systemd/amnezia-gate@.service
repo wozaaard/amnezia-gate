@@ -1,0 +1,29 @@
+[Unit]
+Description=Containerized AmneziaWG proxy profile %I
+Documentation=man:systemd-nspawn(1)
+Requires=amnezia-gate-network.service
+After=amnezia-gate-network.service network-online.target modprobe@tun.service
+Wants=network-online.target modprobe@tun.service
+
+[Service]
+Type=simple
+SELinuxContext=system_u:system_r:container_runtime_t:s0
+ExecStartPre=/usr/libexec/amnezia-gate-run prepare %I
+ExecStart=/usr/libexec/amnezia-gate-run run %I
+ExecStopPost=/usr/libexec/amnezia-gate-run cleanup %I
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=2min
+TimeoutStopSec=20s
+KillMode=mixed
+Slice=machine.slice
+Delegate=yes
+TasksMax=512
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rwm
+DeviceAllow=char-pts rw
+DeviceAllow=/dev/loop-control rw
+DeviceAllow=block-loop rw
+
+[Install]
+WantedBy=multi-user.target

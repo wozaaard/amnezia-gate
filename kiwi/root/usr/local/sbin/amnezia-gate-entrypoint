@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly interface=awg0
+readonly awg_config=/config/awg0.conf
+readonly sockd_config=/run/amnezia/sockd.conf
+readonly tinyproxy_config=/run/amnezia/tinyproxy.conf
+
+sockd_pid=
+tinyproxy_pid=
+tunnel_up=0
+
+log() {
+    printf '[profile:%s] %s\n' "${PROFILE_NAME:-unknown}" "$*"
+}
+
+die() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    local status=$?
+    trap - EXIT HUP INT TERM
+    set +e
+    local pid alive attempt
+    for pid in "$tinyproxy_pid" "$sockd_pid"; do
+        [[ -z "$pid" ]] || kill -TERM "$pid" 2>/dev/null
+    done
+    for ((attempt = 0; attempt < 20; attempt++)); do
+        alive=0
+        for pid in "$tinyproxy_pid" "$sockd_pid"; do
+            [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null || alive=1
+        done
+        (( alive )) || break
+        sleep 0.1
+    done
+    for pid in "$tinyproxy_pid" "$sockd_pid"; do
+        [[ -z "$pid" ]] || kill -KILL "$pid" 2>/dev/null
+        [[ -z "$pid" ]] || wait "$pid" 2>/dev/null
+    done
+    if (( tunnel_up )); then
+        timeout --signal=TERM --kill-after=1 5 \
+            awg-quick down "$awg_config" >/dev/null 2>&1
+    fi
+    exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+
+[[ -r "$awg_config" ]] || die "$awg_config is not readable"
+[[ ${LAN_CIDRS:-} != "" ]] || die 'LAN_CIDRS is empty'
+[[ ${OUTER_ADDRESS:-} != "" ]] || die 'OUTER_ADDRESS is empty'
+[[ ${OUTER_GATEWAY:-} != "" ]] || die 'OUTER_GATEWAY is empty'
+mkdir -p /run/amnezia /run/amneziawg
+
+ip link set dev lo up
+ip link set dev host0 up
+ip -4 address replace "$OUTER_ADDRESS" dev host0
+ip -4 route replace default via "$OUTER_GATEWAY" dev host0
+
+[[ -s /etc/resolv.conf ]] || die '/etc/resolv.conf is empty'
+
+read -r outer_gateway outer_device < <(
+    ip -4 route show default | awk '/^default via / { print $3, $5; exit }'
+)
+[[ -n "${outer_gateway:-}" && -n "${outer_device:-}" ]] || die 'IPv4 outer default route not found'
+
+bridge_cidr="$(ip -4 route show dev "$outer_device" scope link | awk 'NR == 1 { print $1 }')"
+[[ -n "$bridge_cidr" ]] || die "connected network for $outer_device not found"
+
+acl_cidrs=("$bridge_cidr")
+route_cidrs=()
+IFS=', ' read -r -a configured_lans <<<"$LAN_CIDRS"
+for cidr in "${configured_lans[@]}"; do
+    [[ -n "$cidr" ]] || continue
+    [[ $cidr =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || die "unsupported LAN CIDR: $cidr"
+    acl_cidrs+=("$cidr")
+    route_cidrs+=("$cidr")
+done
+
+{
+    printf '%s\n' \
+        'logoutput: stderr' \
+        'internal: 0.0.0.0 port = 1080' \
+        "external: $interface" \
+        'clientmethod: none' \
+        'socksmethod: none' \
+        'user.privileged: root' \
+        'user.unprivileged: nobody'
+    for cidr in "${acl_cidrs[@]}"; do
+        printf 'client pass {\n    from: %s to: 0/0\n    log: error\n}\n' "$cidr"
+        printf 'socks pass {\n    from: %s to: 0/0\n    protocol: tcp udp\n    log: error\n}\n' "$cidr"
+    done
+} >"$sockd_config"
+
+{
+    printf '%s\n' \
+        'User nobody' \
+        'Group nobody' \
+        'Port 10080' \
+        'Listen 0.0.0.0' \
+        'Timeout 600' \
+        'MaxClients 100' \
+        'LogLevel Info' \
+        'ViaProxyName "tinyproxy"'
+    for cidr in "${acl_cidrs[@]}"; do
+        printf 'Allow %s\n' "$cidr"
+    done
+} >"$tinyproxy_config"
+
+log "starting AmneziaWG"
+export WG_QUICK_FORCE_USERSPACE=1
+awg-quick up "$awg_config"
+tunnel_up=1
+
+endpoint_count=0
+while read -r _ endpoint; do
+    [[ -n "${endpoint:-}" && $endpoint != '(none)' ]] || continue
+    host=${endpoint%:*}
+    host=${host#[}
+    host=${host%]}
+    if [[ $host == *:* ]]; then
+        die "IPv6 outer endpoint is not supported yet: $host"
+    fi
+    ip -4 route replace "$host/32" via "$outer_gateway" dev "$outer_device"
+    ((endpoint_count += 1))
+done < <(awg show "$interface" endpoints)
+(( endpoint_count > 0 )) || die 'profile has no resolved endpoint'
+
+for cidr in "${route_cidrs[@]}"; do
+    ip -4 route replace "$cidr" via "$outer_gateway" dev "$outer_device"
+done
+
+# Replacing the outer default route gives fail-closed behaviour: if awg0
+# disappears, only explicit endpoint and LAN routes remain reachable.
+ip -4 route replace default dev "$interface"
+
+if awg show "$interface" allowed-ips | grep -Eq '(^|[[:space:]])::/0([[:space:]]|$)'; then
+    ip -6 route replace default dev "$interface"
+fi
+
+log "starting SOCKS proxy on :1080 and HTTP proxy on :10080"
+sockd -f "$sockd_config" &
+sockd_pid=$!
+tinyproxy -d -c "$tinyproxy_config" &
+tinyproxy_pid=$!
+
+while true; do
+    kill -0 "$sockd_pid" 2>/dev/null || die 'sockd exited'
+    kill -0 "$tinyproxy_pid" 2>/dev/null || die 'tinyproxy exited'
+    awg show interfaces | grep -qw "$interface" || die "$interface disappeared"
+    sleep 2
+done

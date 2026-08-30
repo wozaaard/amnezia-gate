@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Amnezia Gate
+Comment=Manage isolated AmneziaWG proxy profiles
+Exec=org.amnezia.Gate
+Icon=org.amnezia.Gate
+Terminal=false
+Categories=Network;
+Keywords=VPN;Proxy;Amnezia;SOCKS;
+StartupNotify=true
+DBusActivatable=false

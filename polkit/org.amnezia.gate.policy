@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Amnezia Gate</vendor>
+  <vendor_url>https://github.com/amnezia-vpn/amneziawg-go</vendor_url>
+
+  <action id="org.amnezia.gate.control">
+    <description>Control Amnezia proxy profiles</description>
+    <message>Authentication is required to control an Amnezia proxy profile</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.amnezia.gate.configure">
+    <description>Configure Amnezia proxy profiles</description>
+    <message>Authentication is required to configure Amnezia proxy profiles</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

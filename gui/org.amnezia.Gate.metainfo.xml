@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.amnezia.Gate</id>
+  <name>Amnezia Gate</name>
+  <summary>Manage isolated AmneziaWG proxy profiles</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      Import named AmneziaWG configurations and control isolated SOCKS and
+      HTTP proxy profiles.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.amnezia.Gate.desktop</launchable>
+  <provides>
+    <binary>org.amnezia.Gate</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+    <category>Utility</category>
+  </categories>
+</component>

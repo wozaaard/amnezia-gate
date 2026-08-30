@@ -1,0 +1,119 @@
+#!/usr/bin/python3
+
+import os
+import sys
+
+from gi.repository import Gio, GLib
+
+
+BUS_NAME = 'org.amnezia.Gate1'
+OBJECT_PATH = '/org/amnezia/Gate1'
+INTERFACE = 'org.amnezia.Gate1.Manager'
+BUS_TYPE = Gio.BusType.SESSION if os.getenv('AMNEZIA_GATE_BUS') == 'session' else Gio.BusType.SYSTEM
+
+
+def usage():
+    print('''Usage:
+  amneziactl list
+  amneziactl status PROFILE
+  amneziactl import CONFIG --name PROFILE [--replace]
+  amneziactl start|stop|restart PROFILE
+  amneziactl remove PROFILE --yes''')
+
+
+def call(connection, method, parameters, reply_type=None):
+    result = connection.call_sync(
+        BUS_NAME,
+        OBJECT_PATH,
+        INTERFACE,
+        method,
+        parameters,
+        None if reply_type is None else GLib.VariantType.new(reply_type),
+        Gio.DBusCallFlags.NONE,
+        -1,
+        None,
+    )
+    return result.unpack()
+
+
+def print_profiles(profiles):
+    print(f'{"PROFILE":20} {"SOCKS":8} {"HTTP":8} STATE')
+    for name, socks, http, active, sub in profiles:
+        print(f'{name:20} {socks:<8} {http:<8} {active}/{sub}')
+
+
+def main(argv):
+    arguments = list(argv)
+    command = arguments.pop(0) if arguments else None
+    if command in (None, '-h', '--help', 'help'):
+        usage()
+        return 1 if command is None else 0
+
+    connection = Gio.bus_get_sync(BUS_TYPE, None)
+    if command == 'list':
+        if arguments:
+            raise RuntimeError('list does not accept arguments')
+        profiles, = call(connection, 'ListProfiles', None, '(a(suuss))')
+        print_profiles(profiles)
+    elif command == 'status':
+        if len(arguments) != 1:
+            raise RuntimeError('status requires PROFILE')
+        profile, = call(
+            connection,
+            'GetProfile',
+            GLib.Variant('(s)', (arguments[0],)),
+            '((suuss))',
+        )
+        print_profiles([profile])
+    elif command == 'import':
+        if not arguments:
+            raise RuntimeError('import requires CONFIG')
+        path = arguments.pop(0)
+        name = None
+        replace = False
+        while arguments:
+            option = arguments.pop(0)
+            if option == '--name':
+                if not arguments:
+                    raise RuntimeError('--name requires PROFILE')
+                name = arguments.pop(0)
+            elif option == '--replace':
+                replace = True
+            else:
+                raise RuntimeError(f'unknown import option: {option}')
+        if name is None:
+            raise RuntimeError('import requires --name PROFILE')
+        with open(path, encoding='utf-8') as config_file:
+            configuration = config_file.read()
+        profile, = call(
+            connection,
+            'ImportProfile',
+            GLib.Variant('(ssb)', (name, configuration, replace)),
+            '((suuss))',
+        )
+        print_profiles([profile])
+    elif command in ('start', 'stop', 'restart'):
+        if len(arguments) != 1:
+            raise RuntimeError(f'{command} requires PROFILE')
+        method = f'{command.capitalize()}Profile'
+        call(connection, method, GLib.Variant('(s)', (arguments[0],)), '()')
+    elif command == 'remove':
+        if len(arguments) != 2 or arguments[1] != '--yes':
+            raise RuntimeError('remove requires PROFILE --yes')
+        call(connection, 'RemoveProfile', GLib.Variant('(s)', (arguments[0],)), '()')
+    else:
+        usage()
+        raise RuntimeError(f'unknown command: {command}')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except GLib.Error as error:
+        Gio.DBusError.strip_remote_error(error)
+        print(f'amneziactl: {error.message}', file=sys.stderr)
+        sys.exit(1)
+    except (OSError, RuntimeError) as error:
+        print(f'amneziactl: {error}', file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.amnezia.Gate1
+Exec=/usr/libexec/amnezia-gate-daemon
+User=root
+SystemdService=amnezia-gate-daemon.service

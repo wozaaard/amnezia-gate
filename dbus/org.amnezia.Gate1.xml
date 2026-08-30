@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.amnezia.Gate1.Manager">
+    <method name="ListProfiles">
+      <arg name="profiles" type="a(suuss)" direction="out"/>
+    </method>
+    <method name="GetProfile">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="profile" type="(suuss)" direction="out"/>
+    </method>
+    <method name="ImportProfile">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="configuration" type="s" direction="in"/>
+      <arg name="replace" type="b" direction="in"/>
+      <arg name="profile" type="(suuss)" direction="out"/>
+    </method>
+    <method name="RemoveProfile">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <method name="StartProfile">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <method name="StopProfile">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <method name="RestartProfile">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <signal name="Changed"/>
+  </interface>
+</node>
