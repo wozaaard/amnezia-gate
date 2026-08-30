@@ -1,1 +1,1 @@
-/usr/lib/amnezia-gate/images/rootfs-[^/]+\.squashfs -- gen_context(system_u:object_r:container_ro_file_t,s0)
+/usr/lib/amnezia-gate/images/rootfs-[^/]+\.squashfs -- system_u:object_r:container_ro_file_t:s0

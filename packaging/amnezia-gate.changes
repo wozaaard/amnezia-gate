@@ -1,4 +1,9 @@
 -------------------------------------------------------------------
+Sun Aug 30 13:57:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Fix SELinux file-context encoding in the packaged policy module.
+
+-------------------------------------------------------------------
 Sun Aug 30 13:31:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Initial package version 0.1.0.
