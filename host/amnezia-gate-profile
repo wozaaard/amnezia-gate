@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -Eeuo pipefail
 
 profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}

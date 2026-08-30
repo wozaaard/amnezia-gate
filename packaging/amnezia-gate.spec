@@ -17,9 +17,15 @@ Source4:        %{name}-sysusers.conf
 ExclusiveArch:  x86_64
 
 BuildRequires:  checkpolicy
+BuildRequires:  dbus-1-daemon
+BuildRequires:  desktop-file-utils
+BuildRequires:  glib2-tools
 BuildRequires:  make
 BuildRequires:  policycoreutils
+BuildRequires:  python3-base
+BuildRequires:  python3-gobject
 BuildRequires:  systemd-rpm-macros
+BuildRequires:  typelib-1_0-Polkit-1_0
 BuildRequires:  zstd
 Requires:       container-selinux
 Requires:       iproute2
@@ -42,6 +48,7 @@ exact per-profile rules allow coexistence with a default drop policy.
 
 %package gnome
 Summary:        GNOME application for managing Amnezia Gate profiles
+BuildArch:      noarch
 Requires:       %{name} = %{version}-%{release}
 Requires:       gjs
 Requires:       typelib-1_0-Adw-1
@@ -56,6 +63,10 @@ Amnezia Gate profiles through its system D-Bus service.
 
 %build
 make %{?_smp_mflags} selinux
+
+%check
+make test
+desktop-file-validate gui/org.amnezia.Gate.desktop
 
 %install
 make install \
@@ -78,7 +89,7 @@ install -D -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/%{name}/rootfs.verified
 %service_add_post amnezia-gate-daemon.service amnezia-gate-network.service
 if /usr/sbin/selinuxenabled; then
     /usr/sbin/semodule -i %{_datadir}/selinux/packages/%{name}/amnezia_gate.pp || :
-    /usr/bin/chcon -u system_u -r object_r -t container_ro_file_t -l s0 \
+    /usr/sbin/restorecon -F \
         %{_prefix}/lib/%{name}/images/rootfs-%{version}-%{release}.%{_arch}.squashfs || :
 fi
 
@@ -111,30 +122,27 @@ fi
 %{_datadir}/polkit-1/actions/org.amnezia.gate.policy
 %{_datadir}/polkit-1/rules.d/50-amnezia-gate.rules
 %{_sysusersdir}/amnezia-gate.conf
+%dir %{_datadir}/dbus-1
+%dir %{_datadir}/dbus-1/interfaces
+%dir %{_datadir}/dbus-1/system-services
+%dir %{_datadir}/dbus-1/system.d
+%dir %{_datadir}/selinux
+%dir %{_datadir}/selinux/packages
+%dir %{_datadir}/selinux/packages/%{name}
 %{_datadir}/selinux/packages/%{name}/amnezia_gate.pp
 %dir %{_prefix}/lib/%{name}
 %dir %{_prefix}/lib/%{name}/images
 %{_prefix}/lib/%{name}/images/rootfs-%{version}-%{release}.%{_arch}.squashfs
 %{_prefix}/lib/%{name}/rootfs.squashfs
 %config(noreplace) %{_sysconfdir}/amnezia/profiles.conf
+%dir %{_sysconfdir}/amnezia
 %dir %attr(0700,root,root) %{_sysconfdir}/amnezia/profiles
 
 %files gnome
 %{_bindir}/org.amnezia.Gate
 %{_datadir}/applications/org.amnezia.Gate.desktop
 %{_datadir}/metainfo/org.amnezia.Gate.metainfo.xml
+%dir %{_datadir}/icons/hicolor
+%dir %{_datadir}/icons/hicolor/scalable
+%dir %{_datadir}/icons/hicolor/scalable/apps
 %{_datadir}/icons/hicolor/scalable/apps/org.amnezia.Gate.svg
-
-%changelog
-* Sun Aug 30 2026 Sergey - 0.1.0-0
-- Split the optional GNOME application into amnezia-gate-gnome
-- Optionally mirror profile forwarding into an active iptables ruleset
-- Replace the core GJS daemon and CLI with Python/PyGObject
-- Require an explicit system-safe profile name during import
-- Let systemd provision the writable runtime directory for network state
-- Disable a newly enabled profile when its initial start fails
-- Show pending profile operations in the GNOME application
-- Allow passwordless management for explicitly delegated amnezia group members
-
-* Sat Aug 29 2026 Sergey - 0.1.0-0
-- Initial systemd-nspawn implementation with direct nftables networking

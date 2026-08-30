@@ -1,5 +1,6 @@
 ROOTFS_IMAGE ?= _build/amnezia-gate-rootfs.squashfs
 SELINUX_MODULE ?= _build/amnezia_gate.pp
+SELINUX_FILE_CONTEXTS ?= selinux/amnezia_gate.fc
 VERSION ?= 0.1.0
 SOURCE_ARCHIVE ?= _build/amnezia-gate-$(VERSION).tar.zst
 RPM_TOPDIR ?= $(CURDIR)/_build/rpmbuild
@@ -29,10 +30,10 @@ $(ROOTFS_IMAGE): build/build-rootfs.sh $(KIWI_SOURCES)
 
 selinux: $(SELINUX_MODULE)
 
-$(SELINUX_MODULE): selinux/amnezia_gate.te
+$(SELINUX_MODULE): selinux/amnezia_gate.te $(SELINUX_FILE_CONTEXTS)
 	install -d $(dir $@)
 	checkmodule -M -m -o $(@:.pp=.mod) $<
-	semodule_package -o $@ -m $(@:.pp=.mod)
+	semodule_package -o $@ -m $(@:.pp=.mod) -f $(SELINUX_FILE_CONTEXTS)
 
 source:
 	bash build/build-source.sh $(VERSION) $(SOURCE_ARCHIVE)

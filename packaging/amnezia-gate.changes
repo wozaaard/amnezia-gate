@@ -1,0 +1,9 @@
+-------------------------------------------------------------------
+Sun Aug 30 13:31:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Initial package version 0.1.0.
+- Run named AmneziaWG profiles in isolated systemd-nspawn containers.
+- Expose per-profile SOCKS5 and HTTP proxies with nftables networking.
+- Provide D-Bus/Polkit management, CLI and a separate GNOME application.
+- Support AWG 3.1 configuration parameters and passwordless delegation to
+  members of the amnezia group.

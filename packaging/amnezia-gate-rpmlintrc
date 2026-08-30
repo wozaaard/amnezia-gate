@@ -1,0 +1,3 @@
+# The package embeds an architecture-specific AmneziaWG root filesystem in
+# squashfs; rpmlint cannot inspect that payload and reports no-binary.
+addFilter("amnezia-gate\.x86_64: E: no-binary")

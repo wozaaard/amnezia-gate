@@ -8,4 +8,3 @@ Terminal=false
 Categories=Network;
 Keywords=VPN;Proxy;Amnezia;SOCKS;
 StartupNotify=true
-DBusActivatable=false
