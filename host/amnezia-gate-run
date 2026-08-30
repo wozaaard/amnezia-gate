@@ -23,6 +23,7 @@ profile_dir="$profile_root/$profile"
 environment_file="$profile_dir/profile.env"
 awg_config="$profile_dir/awg0.conf"
 resolv_config="$profile_dir/resolv.conf"
+tinyproxy_config="$profile_dir/tinyproxy.conf"
 device_root=${AMNEZIA_PROFILE_DEVICE_ROOT:-/dev/amnezia-gate}
 tun_device="$device_root/${profile}-tun"
 
@@ -180,6 +181,27 @@ wait_nspawn_cleanup() {
     die "nspawn export directory was not removed: $runtime_path"
 }
 
+write_tinyproxy_config() {
+    local cidr temporary
+    temporary=$(mktemp "$profile_dir/.tinyproxy.conf.XXXXXX")
+    chmod 0644 "$temporary"
+    {
+        printf '%s\n' \
+            'User nobody' \
+            'Group nobody' \
+            'Port 10080' \
+            'Listen 0.0.0.0' \
+            'Timeout 600' \
+            'MaxClients 100' \
+            'LogLevel Info' \
+            'ViaProxyName "tinyproxy"'
+        for cidr in "${allowed_source_cidrs[@]}"; do
+            printf 'Allow %s\n' "$cidr"
+        done
+    } >"$temporary"
+    mv -f -- "$temporary" "$tinyproxy_config"
+}
+
 prepare_network() {
     local dns resolv_tmp
     local -a dns_servers
@@ -199,6 +221,7 @@ prepare_network() {
         printf 'nameserver %s\n' "$dns" >>"$resolv_tmp"
     done
     mv -f -- "$resolv_tmp" "$resolv_config"
+    write_tinyproxy_config
 
     "$nspawn_bin" --cleanup --machine="$machine" \
         --image="$ROOTFS_IMAGE" >/dev/null 2>&1 || true
@@ -221,7 +244,8 @@ prepare_network() {
         /usr/bin/mknod -m 0600 "$tun_device" c 10 200
         if [[ -e /sys/fs/selinux/enforce ]]; then
             /usr/bin/chcon -u system_u -r object_r -t container_file_t \
-                -l "$selinux_level" "$awg_config" "$resolv_config" "$tun_device"
+                -l "$selinux_level" "$awg_config" "$resolv_config" \
+                "$tinyproxy_config" "$tun_device"
         fi
     else
         : >"$tun_device"
@@ -315,6 +339,7 @@ run_container() {
         --bind="$tun_device:/dev/net/tun" \
         --bind-ro="$awg_config:/config/awg0.conf" \
         --bind-ro="$resolv_config:/etc/resolv.conf" \
+        --bind-ro="$tinyproxy_config:/etc/tinyproxy/tinyproxy.conf" \
         --setenv="PROFILE_NAME=$profile" \
         --setenv="LAN_CIDRS=$LAN_CIDRS" \
         --setenv="OUTER_ADDRESS=$guest_address/30" \

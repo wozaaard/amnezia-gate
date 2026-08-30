@@ -1,4 +1,10 @@
 -------------------------------------------------------------------
+Sun Aug 30 14:36:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Generate the tinyproxy configuration on the host and bind it read-only at
+  its standard AppArmor-compatible path inside the container.
+
+-------------------------------------------------------------------
 Sun Aug 30 13:57:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Fix SELinux file-context encoding in the packaged policy module.

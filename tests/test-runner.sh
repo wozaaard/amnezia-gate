@@ -110,7 +110,11 @@ grep -Fqx -- "--bind=$test_dir/dev/London-tun:/dev/net/tun" \
     "$test_dir/nspawn.log"
 grep -Fqx -- "--bind-ro=$test_dir/profiles/London/resolv.conf:/etc/resolv.conf" \
     "$test_dir/nspawn.log"
+grep -Fqx -- "--bind-ro=$test_dir/profiles/London/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf" \
+    "$test_dir/nspawn.log"
 grep -Fqx 'nameserver 1.1.1.1' "$test_dir/profiles/London/resolv.conf"
+grep -Fqx 'Allow 10.231.1.4/30' "$test_dir/profiles/London/tinyproxy.conf"
+grep -Fqx 'Allow 192.168.50.0/24' "$test_dir/profiles/London/tinyproxy.conf"
 
 export AMNEZIA_TEST_IPTABLES_RULES_PRESENT=1
 "$project_dir/host/amnezia-gate-run" cleanup London

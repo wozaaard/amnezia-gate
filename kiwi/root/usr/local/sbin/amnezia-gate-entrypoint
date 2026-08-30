@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly interface=awg0
 readonly awg_config=/config/awg0.conf
 readonly sockd_config=/run/amnezia/sockd.conf
-readonly tinyproxy_config=/run/amnezia/tinyproxy.conf
+readonly tinyproxy_config=/etc/tinyproxy/tinyproxy.conf
 
 sockd_pid=
 tinyproxy_pid=
@@ -50,6 +50,7 @@ trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
 
 [[ -r "$awg_config" ]] || die "$awg_config is not readable"
+[[ -r "$tinyproxy_config" ]] || die "$tinyproxy_config is not readable"
 [[ ${LAN_CIDRS:-} != "" ]] || die 'LAN_CIDRS is empty'
 [[ ${OUTER_ADDRESS:-} != "" ]] || die 'OUTER_ADDRESS is empty'
 [[ ${OUTER_GATEWAY:-} != "" ]] || die 'OUTER_GATEWAY is empty'
@@ -94,21 +95,6 @@ done
         printf 'socks pass {\n    from: %s to: 0/0\n    protocol: tcp udp\n    log: error\n}\n' "$cidr"
     done
 } >"$sockd_config"
-
-{
-    printf '%s\n' \
-        'User nobody' \
-        'Group nobody' \
-        'Port 10080' \
-        'Listen 0.0.0.0' \
-        'Timeout 600' \
-        'MaxClients 100' \
-        'LogLevel Info' \
-        'ViaProxyName "tinyproxy"'
-    for cidr in "${acl_cidrs[@]}"; do
-        printf 'Allow %s\n' "$cidr"
-    done
-} >"$tinyproxy_config"
 
 log "starting AmneziaWG"
 export WG_QUICK_FORCE_USERSPACE=1
