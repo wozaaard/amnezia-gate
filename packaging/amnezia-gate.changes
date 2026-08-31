@@ -1,4 +1,10 @@
 -------------------------------------------------------------------
+Mon Aug 31 19:19:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Declare the file-context type required by the SELinux policy package.
+- Avoid packaging the transient SELinux module-store entry.
+
+-------------------------------------------------------------------
 Mon Aug 31 18:38:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Reject profile names that cannot be used as systemd machine names.

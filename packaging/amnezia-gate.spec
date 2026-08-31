@@ -156,12 +156,8 @@ fi
 %dir %attr(0700,root,root) %{_sysconfdir}/amnezia/profiles
 
 %files selinux
+%dir %{_datadir}/selinux/packages/%{selinuxtype}
 %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp
-%if 0%{?_selinux_store_path:1}
-%ghost %verify(not md5 size mtime) %{_selinux_store_path}/%{selinuxtype}/active/modules/200/%{modulename}
-%else
-%ghost %verify(not md5 size mtime) %{_sharedstatedir}/selinux/%{selinuxtype}/active/modules/200/%{modulename}
-%endif
 
 %files gnome
 %{_bindir}/org.amnezia.Gate
