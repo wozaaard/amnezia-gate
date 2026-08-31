@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Mon Aug 31 18:38:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Reject profile names that cannot be used as systemd machine names.
+- Apply address-family restrictions through the service unit for compatibility
+  with the systemd version shipped by openSUSE Leap.
+- Split the host SELinux policy into an automatically selected
+  amnezia-gate-selinux subpackage and use the distribution policy macros.
+
+-------------------------------------------------------------------
 Sun Aug 30 14:36:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Generate the tinyproxy configuration on the host and bind it read-only at

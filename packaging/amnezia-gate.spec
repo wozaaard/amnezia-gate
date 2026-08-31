@@ -6,6 +6,8 @@ Name:           amnezia-gate
 Version:        0.1.0
 Release:        0
 %global debug_package %{nil}
+%global selinuxtype targeted
+%global modulename amnezia_gate
 Summary:        Isolated AmneziaWG proxy profiles managed by systemd-nspawn
 License:        GPL-3.0-or-later
 URL:            https://github.com/amnezia-vpn/amneziawg-go
@@ -24,18 +26,18 @@ BuildRequires:  make
 BuildRequires:  policycoreutils
 BuildRequires:  python3-base
 BuildRequires:  python3-gobject
+BuildRequires:  selinux-policy-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  typelib-1_0-Polkit-1_0
 BuildRequires:  zstd
-Requires:       container-selinux
 Requires:       iproute2
 Requires:       nftables
-Requires:       policycoreutils
 Requires:       polkit
 Requires:       python3-base
 Requires:       python3-gobject
 Requires:       systemd-container
 Requires:       typelib-1_0-Polkit-1_0
+Requires:       (%{name}-selinux if selinux-policy-base)
 %{?systemd_requires}
 %add_sysuser g amnezia - -
 
@@ -45,6 +47,17 @@ Each profile exposes independent Dante SOCKS5 and tinyproxy HTTP proxy ports,
 while veth lifecycle, LAN forwarding and NAT are managed directly through
 iproute2 and nftables. When an active iptables FORWARD ruleset is detected,
 exact per-profile rules allow coexistence with a default drop policy.
+
+%package selinux
+Summary:        SELinux policy for Amnezia Gate
+BuildArch:      noarch
+Requires:       %{name} = %{version}-%{release}
+Requires:       container-selinux
+%{selinux_requires}
+
+%description selinux
+Provides the SELinux policy module and file contexts required to run
+Amnezia Gate containers on an SELinux host.
 
 %package gnome
 Summary:        GNOME application for managing Amnezia Gate profiles
@@ -70,6 +83,8 @@ desktop-file-validate gui/org.amnezia.Gate.desktop
 
 %install
 make install \
+    DESTDIR=%{buildroot}
+make install-selinux \
     DESTDIR=%{buildroot} \
     SELINUX_MODULE="$PWD/_build/amnezia_gate.pp"
 
@@ -87,11 +102,6 @@ install -D -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/%{name}/rootfs.verified
 
 %post
 %service_add_post amnezia-gate-daemon.service amnezia-gate-network.service
-if /usr/sbin/selinuxenabled; then
-    /usr/sbin/semodule -i %{_datadir}/selinux/packages/%{name}/amnezia_gate.pp || :
-    /usr/sbin/restorecon -F \
-        %{_prefix}/lib/%{name}/images/rootfs-%{version}-%{release}.%{_arch}.squashfs || :
-fi
 
 %preun
 %service_del_preun amnezia-gate-daemon.service amnezia-gate-network.service
@@ -99,9 +109,20 @@ fi
 %postun
 %service_del_postun amnezia-gate-daemon.service
 %service_del_postun_without_restart amnezia-gate-network.service
-if [ "$1" -eq 0 ] && /usr/sbin/selinuxenabled; then
-    /usr/sbin/semodule -r amnezia_gate || :
+
+%pre selinux
+%selinux_relabel_pre -s %{selinuxtype}
+
+%post selinux
+%selinux_modules_install -s %{selinuxtype} -p 200 %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp
+
+%postun selinux
+if [ "$1" -eq 0 ]; then
+    %selinux_modules_uninstall -s %{selinuxtype} -p 200 %{modulename}
 fi
+
+%posttrans selinux
+%selinux_relabel_post -s %{selinuxtype}
 
 %files
 %license LICENSE
@@ -126,10 +147,6 @@ fi
 %dir %{_datadir}/dbus-1/interfaces
 %dir %{_datadir}/dbus-1/system-services
 %dir %{_datadir}/dbus-1/system.d
-%dir %{_datadir}/selinux
-%dir %{_datadir}/selinux/packages
-%dir %{_datadir}/selinux/packages/%{name}
-%{_datadir}/selinux/packages/%{name}/amnezia_gate.pp
 %dir %{_prefix}/lib/%{name}
 %dir %{_prefix}/lib/%{name}/images
 %{_prefix}/lib/%{name}/images/rootfs-%{version}-%{release}.%{_arch}.squashfs
@@ -137,6 +154,14 @@ fi
 %config(noreplace) %{_sysconfdir}/amnezia/profiles.conf
 %dir %{_sysconfdir}/amnezia
 %dir %attr(0700,root,root) %{_sysconfdir}/amnezia/profiles
+
+%files selinux
+%{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp
+%if 0%{?_selinux_store_path:1}
+%ghost %verify(not md5 size mtime) %{_selinux_store_path}/%{selinuxtype}/active/modules/200/%{modulename}
+%else
+%ghost %verify(not md5 size mtime) %{_sharedstatedir}/selinux/%{selinuxtype}/active/modules/200/%{modulename}
+%endif
 
 %files gnome
 %{_bindir}/org.amnezia.Gate

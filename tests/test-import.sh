@@ -44,9 +44,9 @@ AMNEZIA_PROFILE_ROOT="$test_dir/profiles" \
 AMNEZIA_PROFILE_CONFIG="$test_dir/global.conf" \
 SS_BIN="$test_dir/bin/ss" \
     "$project_dir/host/amnezia-gate-profile" import "$test_dir/London.conf" \
-        --name london_1 --no-start
+        --name london-1 --no-start
 
-profile="$test_dir/profiles/london_1"
+profile="$test_dir/profiles/london-1"
 test -f "$profile/awg0.conf"
 test -f "$profile/profile.env"
 test "$(stat -c '%a' "$profile/awg0.conf")" = 600
@@ -78,8 +78,20 @@ AMNEZIA_PROFILE_ROOT="$test_dir/profiles" \
 AMNEZIA_PROFILE_CONFIG="$test_dir/global.conf" \
 SS_BIN="$test_dir/bin/ss" \
     "$project_dir/host/amnezia-gate-profile" import "$test_dir/London.conf" \
-        --name london_1 --replace --no-start
+        --name london-1 --replace --no-start
 grep -Fqx 'NETWORK_SLOT=0' "$profile/profile.env"
+
+# Profile names are embedded into systemd machine names; underscores are invalid there.
+if AMNEZIA_PROFILE_TESTING=1 \
+   AMNEZIA_PROFILE_ROOT="$test_dir/profiles" \
+   AMNEZIA_PROFILE_CONFIG="$test_dir/global.conf" \
+   SS_BIN="$test_dir/bin/ss" \
+   "$project_dir/host/amnezia-gate-profile" import "$test_dir/London.conf" \
+       --name new_one --no-start; then
+    echo 'profile name with an underscore was accepted' >&2
+    exit 1
+fi
+[[ ! -e $test_dir/profiles/new_one ]]
 
 # Import never derives the profile identity from the file name.
 if AMNEZIA_PROFILE_TESTING=1 \
@@ -118,13 +130,13 @@ if AMNEZIA_PROFILE_TESTING=1 \
    SS_BIN="$test_dir/bin/ss" \
    SYSTEMCTL_BIN="$test_dir/bin/systemctl" \
    "$project_dir/host/amnezia-gate-profile" import "$test_dir/London.conf" \
-       --name failed_start; then
+       --name failed-start; then
     echo 'profile with a failed initial start was accepted' >&2
     exit 1
 fi
-[[ ! -e $test_dir/profiles/failed_start ]]
-grep -Fqx 'enable --now amnezia-gate@failed_start.service' "$test_dir/systemctl.log"
-grep -Fqx 'disable --now amnezia-gate@failed_start.service' "$test_dir/systemctl.log"
+[[ ! -e $test_dir/profiles/failed-start ]]
+grep -Fqx 'enable --now amnezia-gate@failed-start.service' "$test_dir/systemctl.log"
+grep -Fqx 'disable --now amnezia-gate@failed-start.service' "$test_dir/systemctl.log"
 
 cat >"$test_dir/Tallin.conf" <<'EOF'
 [Interface]

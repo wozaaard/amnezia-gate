@@ -94,6 +94,7 @@ systemd-run \
     --property=Delegate=yes \
     --property=KillMode=mixed \
     --property=TimeoutStopSec=20s \
+    --property='RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
     --property=DevicePolicy=closed \
     --property='DeviceAllow=/dev/net/tun rwm' \
     --property='DeviceAllow=/dev/loop-control rw' \

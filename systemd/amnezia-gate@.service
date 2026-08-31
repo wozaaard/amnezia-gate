@@ -24,6 +24,7 @@ DeviceAllow=/dev/net/tun rwm
 DeviceAllow=char-pts rw
 DeviceAllow=/dev/loop-control rw
 DeviceAllow=block-loop rw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

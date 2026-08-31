@@ -67,6 +67,12 @@ if "$project_dir/client/amneziactl" import "$test_root/London.conf"; then
     exit 1
 fi
 
+if "$project_dir/client/amneziactl" \
+    import "$test_root/London.conf" --name new_one; then
+    echo 'D-Bus API accepted a profile name with an underscore' >&2
+    exit 1
+fi
+
 import_output=$("$project_dir/client/amneziactl" \
     import "$test_root/London.conf" --name london)
 grep -q 'london' <<<"$import_output"

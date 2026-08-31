@@ -16,9 +16,9 @@ SYSUSERS_DIR ?= /usr/lib/sysusers.d
 APPLICATION_DIR ?= /usr/share/applications
 METAINFO_DIR ?= /usr/share/metainfo
 ICON_DIR ?= /usr/share/icons/hicolor/scalable/apps
-SELINUX_PACKAGE_DIR ?= /usr/share/selinux/packages/amnezia-gate
+SELINUX_PACKAGE_DIR ?= /usr/share/selinux/packages/targeted
 
-.PHONY: rootfs selinux source rpm test smoke install
+.PHONY: rootfs selinux source rpm test smoke install install-selinux
 
 KIWI_SOURCES := $(shell find kiwi -type f -print)
 
@@ -51,6 +51,7 @@ rpm: rootfs selinux source
 		$(RPM_TOPDIR)/SPECS/amnezia-gate.spec
 
 test: selinux
+	bash tests/test-install.sh
 	bash tests/test-import.sh
 	bash tests/test-runner.sh
 	bash tests/test-dbus.sh
@@ -58,7 +59,7 @@ test: selinux
 smoke:
 	sudo bash tests/test-nspawn.sh $(ROOTFS_IMAGE)
 
-install: selinux
+install:
 	install -D -m 0755 host/amnezia-gate-profile $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-profile
 	install -D -m 0755 host/amnezia-gate-run $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-run
 	install -D -m 0755 host/amnezia-gate-network $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-network
@@ -77,8 +78,11 @@ install: selinux
 	install -D -m 0644 gui/org.amnezia.Gate.desktop $(DESTDIR)$(APPLICATION_DIR)/org.amnezia.Gate.desktop
 	install -D -m 0644 gui/org.amnezia.Gate.metainfo.xml $(DESTDIR)$(METAINFO_DIR)/org.amnezia.Gate.metainfo.xml
 	install -D -m 0644 gui/org.amnezia.Gate.svg $(DESTDIR)$(ICON_DIR)/org.amnezia.Gate.svg
-	install -D -m 0644 $(SELINUX_MODULE) $(DESTDIR)$(SELINUX_PACKAGE_DIR)/amnezia_gate.pp
 	install -d -m 0700 $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles
 	@test -e $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles.conf || \
 		install -m 0644 config/profiles.conf $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles.conf
-	@if test -z "$(DESTDIR)"; then semodule -i $(SELINUX_PACKAGE_DIR)/amnezia_gate.pp; systemctl daemon-reload; fi
+	@if test -z "$(DESTDIR)"; then systemctl daemon-reload; fi
+
+install-selinux: selinux
+	install -D -m 0644 $(SELINUX_MODULE) $(DESTDIR)$(SELINUX_PACKAGE_DIR)/amnezia_gate.pp
+	@if test -z "$(DESTDIR)"; then semodule -i $(SELINUX_PACKAGE_DIR)/amnezia_gate.pp; fi

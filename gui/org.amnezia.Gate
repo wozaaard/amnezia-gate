@@ -9,7 +9,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 const BUS_NAME = 'org.amnezia.Gate1';
 const OBJECT_PATH = '/org/amnezia/Gate1';
 const INTERFACE = 'org.amnezia.Gate1.Manager';
-const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,31}$/;
 
 const GateApplication = GObject.registerClass(
 class GateApplication extends Adw.Application {
@@ -312,7 +312,7 @@ class GateApplication extends Adw.Application {
             const name = entry.get_text();
             let message = '';
             if (!PROFILE_PATTERN.test(name)) {
-                message = 'От 1 до 32 символов: латинские буквы, цифры, _ и -; первый символ — буква или цифра.';
+                message = 'От 1 до 32 символов: латинские буквы, цифры и -; первый символ — буква или цифра.';
             } else if (this._profiles.has(name)) {
                 message = `Профиль ${name} уже существует.`;
             }

@@ -77,6 +77,11 @@ export IPTABLES_BIN="$test_dir/bin/iptables"
 export NFT_BIN="$test_dir/bin/nft"
 export NSPAWN_BIN="$test_dir/bin/nspawn"
 
+if "$project_dir/host/amnezia-gate-run" run new_one; then
+    echo 'runner accepted a profile name with an underscore' >&2
+    exit 1
+fi
+
 "$project_dir/host/amnezia-gate-run" prepare London
 
 grep -Fqx 'link add name az65h type veth peer name az65c' "$test_dir/ip.log"
@@ -106,6 +111,9 @@ grep -Fqx -- '--volatile=overlay' "$test_dir/nspawn.log"
 grep -Fqx -- "--image=$test_dir/rootfs.squashfs" "$test_dir/nspawn.log"
 grep -Fqx -- '--capability=CAP_NET_ADMIN' "$test_dir/nspawn.log"
 grep -Fqx -- '--kill-signal=SIGRTMIN+3' "$test_dir/nspawn.log"
+! grep -Fq -- '--restrict-address-families=' "$test_dir/nspawn.log"
+grep -Fqx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
+    "$project_dir/systemd/amnezia-gate@.service"
 grep -Fqx -- "--bind=$test_dir/dev/London-tun:/dev/net/tun" \
     "$test_dir/nspawn.log"
 grep -Fqx -- "--bind-ro=$test_dir/profiles/London/resolv.conf:/etc/resolv.conf" \

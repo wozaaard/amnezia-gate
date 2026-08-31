@@ -15,7 +15,7 @@ BUS_NAME = 'org.amnezia.Gate1'
 OBJECT_PATH = '/org/amnezia/Gate1'
 INTERFACE = 'org.amnezia.Gate1.Manager'
 ERROR_PREFIX = f'{BUS_NAME}.Error'
-PROFILE_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$')
+PROFILE_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9-]{0,31}$')
 MAX_CONFIG_BYTES = 1024 * 1024
 
 TESTING = os.getenv('AMNEZIA_GATE_TESTING') == '1'
@@ -41,7 +41,7 @@ def validate_name(name):
     if PROFILE_PATTERN.fullmatch(name) is None:
         raise RuntimeError(
             'profile name must be 1-32 characters, start with a letter or digit '
-            f'and contain only ASCII letters, digits, _ or -: {name}'
+            f'and contain only ASCII letters, digits or -: {name}'
         )
 
 

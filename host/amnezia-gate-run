@@ -10,7 +10,7 @@ action=${1:-}
 profile=${2:-}
 [[ $action == prepare || $action == run || $action == cleanup ]] ||
     die 'usage: amnezia-gate-run prepare|run|cleanup PROFILE'
-[[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$ ]] || die "invalid profile name: $profile"
+[[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,31}$ ]] || die "invalid profile name: $profile"
 
 ip_bin=${IP_BIN:-/usr/sbin/ip}
 nft_bin=${NFT_BIN:-/usr/sbin/nft}
@@ -332,7 +332,6 @@ run_container() {
         --as-pid2 \
         --console=pipe \
         --kill-signal=SIGRTMIN+3 \
-        --restrict-address-families="AF_UNIX AF_INET AF_INET6 AF_NETLINK" \
         "${selinux_args[@]}" \
         --resolv-conf=off \
         --network-interface="$guest_interface:host0" \

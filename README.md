@@ -79,11 +79,14 @@ make rpm
 ```text
 _build/rpmbuild/RPMS/x86_64/amnezia-gate-0.1.0-0.x86_64.rpm
 _build/rpmbuild/RPMS/x86_64/amnezia-gate-gnome-0.1.0-0.x86_64.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.1.0-0.noarch.rpm
 ```
 
 `amnezia-gate` содержит service, CLI и container image. Опциональное GNOME
 приложение вместе с GTK/libadwaita dependencies вынесено в
-`amnezia-gate-gnome`.
+`amnezia-gate-gnome`. SELinux policy вынесена в
+`amnezia-gate-selinux`; zypper установит его вместе с основным пакетом, если в системе
+есть `selinux-policy-base`.
 
 Rootfs декларативно собирается KIWI из `repo-oss` и AmneziaWG repository.
 Описание находится в `kiwi/config.xml`; вместе с squashfs сохраняются KIWI
@@ -104,6 +107,7 @@ make selinux
 make test
 sudo make smoke
 sudo make install
+sudo make install-selinux # на SELinux host
 ```
 
 ## Конфигурация и импорт
@@ -115,7 +119,7 @@ sudo make install
 
 ```bash
 amneziactl import ~/Downloads/London.conf --name london
-amneziactl import ~/Downloads/profile.conf --name site_msk_1
+amneziactl import ~/Downloads/profile.conf --name site-msk-1
 amneziactl list
 amneziactl restart london
 ```
@@ -139,7 +143,7 @@ sudo usermod -aG amnezia sergey
 В GNOME application после выбора файла открывается отдельный диалог имени.
 Имя файла используется только как начальное значение. Имя профиля уникально и
 без преобразований становится именем каталога, systemd instance и nspawn
-machine: от 1 до 32 символов, ASCII letters, digits, `_` и `-`, первый символ —
+machine: от 1 до 32 символов, ASCII letters, digits и `-`, первый символ —
 letter или digit.
 
 Root backend для диагностики и автоматизации:
