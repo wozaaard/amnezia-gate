@@ -61,6 +61,18 @@ iptables integration, а `iptables` требует доступный CLI и з�
 после чего default route заменяется на `awg0`. Если tunnel исчезает, outer
 default route не возвращается — профиль остаётся fail-closed.
 
+При аварийном завершении systemd делает не более пяти попыток запуска за две
+минуты с паузой 10 секунд. После исчерпания лимита профиль остаётся в состоянии
+`failed`, не создавая бесконечный restart loop. Явный `start` или `restart`
+через `amneziactl` сбрасывает этот лимит.
+
+AWG userspace UAPI socket каждого активного профиля доступен только root daemon
+через `/run/amnezia-gate/profiles/PROFILE/awg0.sock`. D-Bus публикует суммарные
+RX/TX counters и время последнего handshake, но не конфигурацию, ключи или
+endpoint. GNOME application получает срезы раз в две секунды; скорость
+вычисляется по фактическому monotonic time между успешно полученными срезами.
+Счётчики начинаются заново после перезапуска контейнера.
+
 ## Сборка RPM
 
 Требуется openSUSE Tumbleweed, KIWI NG и `squashfs-tools`:
@@ -77,9 +89,9 @@ make rpm
 Результат:
 
 ```text
-_build/rpmbuild/RPMS/x86_64/amnezia-gate-0.1.0-0.x86_64.rpm
-_build/rpmbuild/RPMS/x86_64/amnezia-gate-gnome-0.1.0-0.x86_64.rpm
-_build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.1.0-0.noarch.rpm
+_build/rpmbuild/RPMS/x86_64/amnezia-gate-0.2.0-0.x86_64.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-gnome-0.2.0-0.noarch.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.2.0-0.noarch.rpm
 ```
 
 `amnezia-gate` содержит service, CLI и container image. Опциональное GNOME
@@ -121,6 +133,7 @@ sudo make install-selinux # на SELinux host
 amneziactl import ~/Downloads/London.conf --name london
 amneziactl import ~/Downloads/profile.conf --name site-msk-1
 amneziactl list
+amneziactl stats
 amneziactl restart london
 ```
 

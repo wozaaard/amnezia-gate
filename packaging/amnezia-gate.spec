@@ -3,7 +3,7 @@
 #
 
 Name:           amnezia-gate
-Version:        0.1.0
+Version:        0.2.0
 Release:        0
 %global debug_package %{nil}
 %global selinuxtype targeted

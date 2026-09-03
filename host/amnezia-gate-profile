@@ -332,6 +332,9 @@ simple_systemctl() {
     require_root
     local action=$1 profile=${2:-}
     validate_profile "$profile"
+    if [[ $action == start || $action == restart ]]; then
+        "$systemctl_bin" reset-failed "amnezia-gate@${profile}.service"
+    fi
     "$systemctl_bin" "$action" "amnezia-gate@${profile}.service"
 }
 

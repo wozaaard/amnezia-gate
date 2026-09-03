@@ -8,6 +8,9 @@
       <arg name="name" type="s" direction="in"/>
       <arg name="profile" type="(suuss)" direction="out"/>
     </method>
+    <method name="GetStatistics">
+      <arg name="statistics" type="a(sttt)" direction="out"/>
+    </method>
     <method name="ImportProfile">
       <arg name="name" type="s" direction="in"/>
       <arg name="configuration" type="s" direction="in"/>

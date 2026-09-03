@@ -5,11 +5,13 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
+import Pango from 'gi://Pango';
 
 const BUS_NAME = 'org.amnezia.Gate1';
 const OBJECT_PATH = '/org/amnezia/Gate1';
 const INTERFACE = 'org.amnezia.Gate1.Manager';
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,31}$/;
+const STATISTICS_INTERVAL_SECONDS = 2;
 
 const GateApplication = GObject.registerClass(
 class GateApplication extends Adw.Application {
@@ -21,7 +23,11 @@ class GateApplication extends Adw.Application {
         this._window = null;
         this._proxy = null;
         this._profiles = new Map();
+        this._rows = new Map();
         this._pending = new Map();
+        this._statistics = new Map();
+        this._statisticsPending = false;
+        this._statisticsSource = 0;
     }
 
     vfunc_activate() {
@@ -46,11 +52,20 @@ class GateApplication extends Adw.Application {
                     this._refresh();
             });
             this._refresh();
+            this._startStatistics();
         } catch (error) {
             this._showError(error);
             this._showStatus('dialog-error-symbolic', 'Сервис недоступен',
                 'Не удалось подключиться к системному D-Bus service.');
         }
+    }
+
+    vfunc_shutdown() {
+        if (this._statisticsSource !== 0) {
+            GLib.Source.remove(this._statisticsSource);
+            this._statisticsSource = 0;
+        }
+        super.vfunc_shutdown();
     }
 
     _buildWindow() {
@@ -105,7 +120,7 @@ class GateApplication extends Adw.Application {
         this._window.set_content(this._toasts);
     }
 
-    _call(method, parameters, onSuccess = null, onError = null) {
+    _call(method, parameters, onSuccess = null, onError = null, showError = true) {
         if (this._proxy === null)
             return;
         this._proxy.call(
@@ -119,10 +134,179 @@ class GateApplication extends Adw.Application {
                     const reply = proxy.call_finish(result).recursiveUnpack();
                     onSuccess?.(reply);
                 } catch (error) {
-                    this._showError(error);
+                    if (showError)
+                        this._showError(error);
                     onError?.();
                 }
             });
+    }
+
+    _startStatistics() {
+        this._refreshStatistics();
+        this._statisticsSource = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            STATISTICS_INTERVAL_SECONDS,
+            () => {
+                this._refreshStatistics();
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _refreshStatistics() {
+        if (this._statisticsPending)
+            return;
+        this._statisticsPending = true;
+        this._call(
+            'GetStatistics',
+            null,
+            ([statistics]) => {
+                this._statisticsPending = false;
+                this._acceptStatistics(statistics);
+            },
+            () => {
+                this._statisticsPending = false;
+            },
+            false);
+    }
+
+    _acceptStatistics(statistics) {
+        const receivedAt = GLib.get_monotonic_time();
+        const next = new Map();
+        for (const [name, receivedValue, sentValue, handshakeValue] of statistics) {
+            const received = Number(receivedValue);
+            const sent = Number(sentValue);
+            const handshake = Number(handshakeValue);
+            const previous = this._statistics.get(name);
+            let receivedRate = null;
+            let sentRate = null;
+            if (previous !== undefined &&
+                received >= previous.received && sent >= previous.sent) {
+                const elapsed = (receivedAt - previous.receivedAt) / 1_000_000;
+                if (elapsed > 0) {
+                    receivedRate = (received - previous.received) / elapsed;
+                    sentRate = (sent - previous.sent) / elapsed;
+                }
+            }
+            next.set(name, {
+                received,
+                sent,
+                handshake,
+                receivedRate,
+                sentRate,
+                receivedAt,
+            });
+        }
+        this._statistics = next;
+        this._updateStatisticsRows();
+    }
+
+    _updateStatisticsRows() {
+        for (const [name, {statisticsGrid}] of this._rows) {
+            if (statisticsGrid !== null)
+                this._updateStatisticsGrid(statisticsGrid, this._statistics.get(name));
+        }
+    }
+
+    _profileGrid(name, socks, http, state) {
+        const grid = new Gtk.Grid({
+            column_spacing: 8,
+            hexpand: true,
+            halign: Gtk.Align.START,
+            valign: Gtk.Align.CENTER,
+        });
+        for (const [column, title, value, width, xalign, tooltip] of [
+            [0, 'ПРОФИЛЬ', name, 18, 0, name],
+            [1, 'SOCKS', String(socks), 7, 0, `SOCKS port ${socks}`],
+            [2, 'HTTP', String(http), 7, 0, `HTTP port ${http}`],
+            [3, 'СОСТОЯНИЕ', state, 14, 0, state],
+        ]) {
+            const heading = this._fixedLabel(title, width, xalign, 'caption');
+            heading.add_css_class('dim-label');
+            const field = this._fixedLabel(value, width, xalign, 'monospace');
+            field.set_tooltip_text(tooltip);
+            grid.attach(heading, column, 0, 1, 1);
+            grid.attach(field, column, 1, 1, 1);
+        }
+        return grid;
+    }
+
+    _statisticsGrid() {
+        const grid = new Gtk.Grid({
+            column_homogeneous: true,
+            column_spacing: 8,
+            valign: Gtk.Align.CENTER,
+        });
+        const widgets = {};
+        for (const [column, key, title, tooltip] of [
+            [0, 'received', 'RX', 'Получено через туннель'],
+            [1, 'sent', 'TX', 'Отправлено через туннель'],
+            [2, 'handshake', 'HANDSHAKE', 'Последний handshake'],
+        ]) {
+            const heading = this._statisticsLabel(title, 'caption');
+            heading.add_css_class('dim-label');
+            heading.set_tooltip_text(tooltip);
+            const value = this._statisticsLabel('—', 'monospace');
+            const detail = this._statisticsLabel(
+                key === 'handshake' ? '' : '—/с', 'caption');
+            detail.add_css_class('dim-label');
+            detail.add_css_class('monospace');
+            grid.attach(heading, column, 0, 1, 1);
+            grid.attach(value, column, 1, 1, 1);
+            grid.attach(detail, column, 2, 1, 1);
+            widgets[`${key}Value`] = value;
+            widgets[`${key}Detail`] = detail;
+        }
+        widgets.grid = grid;
+        return widgets;
+    }
+
+    _fixedLabel(label, width, xalign, cssClass) {
+        const widget = new Gtk.Label({
+            label,
+            width_chars: width,
+            max_width_chars: width,
+            xalign,
+            ellipsize: Pango.EllipsizeMode.END,
+        });
+        widget.add_css_class(cssClass);
+        return widget;
+    }
+
+    _statisticsLabel(label, cssClass) {
+        return this._fixedLabel(label, 12, 0, cssClass);
+    }
+
+    _updateStatisticsGrid(widgets, statistics) {
+        widgets.receivedValue.set_label(statistics === undefined
+            ? '—'
+            : GLib.format_size(Math.max(0, Math.round(statistics.received))));
+        widgets.receivedDetail.set_label(this._formatRate(statistics?.receivedRate));
+        widgets.sentValue.set_label(statistics === undefined
+            ? '—'
+            : GLib.format_size(Math.max(0, Math.round(statistics.sent))));
+        widgets.sentDetail.set_label(this._formatRate(statistics?.sentRate));
+        const [handshake, detail] = this._formatHandshake(statistics?.handshake ?? 0);
+        widgets.handshakeValue.set_label(handshake);
+        widgets.handshakeDetail.set_label(detail);
+    }
+
+    _formatRate(rate) {
+        if (rate === undefined || rate === null)
+            return '—/с';
+        return `${GLib.format_size(Math.max(0, Math.round(rate)))}/с`;
+    }
+
+    _formatHandshake(timestamp) {
+        if (timestamp <= 0)
+            return ['—', ''];
+        const seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
+        if (seconds < 60)
+            return [`${seconds} с`, 'назад'];
+        if (seconds < 3600)
+            return [`${Math.floor(seconds / 60)} мин`, 'назад'];
+        if (seconds < 86400)
+            return [`${Math.floor(seconds / 3600)} ч`, 'назад'];
+        return [`${Math.floor(seconds / 86400)} д`, 'назад'];
     }
 
     _refresh() {
@@ -143,6 +327,7 @@ class GateApplication extends Adw.Application {
             this._list.remove(child);
 
         this._profiles = new Map(profiles.map(profile => [profile[0], profile]));
+        this._rows = new Map();
         if (profiles.length === 0) {
             this._showStatus('network-vpn-symbolic', 'Профилей пока нет',
                 'Импортируйте AmneziaWG-конфигурацию и задайте имя профиля.');
@@ -153,13 +338,41 @@ class GateApplication extends Adw.Application {
         for (const [name, socks, http, active, sub] of profiles) {
             const isActive = active === 'active';
             const pending = this._pending.get(name);
-            const row = new Adw.ActionRow({
-                title: name,
-                subtitle: `SOCKS :${socks}  ·  HTTP :${http}  ·  ${pending ?? `${active}/${sub}`}`,
+            const profile = [name, socks, http, active, sub];
+            const row = new Gtk.ListBoxRow({
+                activatable: false,
+                selectable: false,
             });
+            const content = new Gtk.Box({
+                orientation: Gtk.Orientation.VERTICAL,
+                spacing: 8,
+                margin_top: 10,
+                margin_bottom: 10,
+                margin_start: 12,
+                margin_end: 12,
+            });
+            const header = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 8,
+            });
+            header.append(this._profileGrid(
+                name, socks, http, pending ?? `${active}/${sub}`));
+            const actions = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 4,
+                hexpand: true,
+                halign: Gtk.Align.END,
+                valign: Gtk.Align.CENTER,
+            });
+            let statisticsGrid = null;
+            if (isActive) {
+                statisticsGrid = this._statisticsGrid();
+                this._updateStatisticsGrid(statisticsGrid, this._statistics.get(name));
+            }
+            this._rows.set(name, {row, profile, statisticsGrid});
 
             if (pending !== undefined) {
-                row.add_suffix(new Gtk.Spinner({
+                actions.append(new Gtk.Spinner({
                     spinning: true,
                     valign: Gtk.Align.CENTER,
                     tooltip_text: pending,
@@ -169,22 +382,29 @@ class GateApplication extends Adw.Application {
                     'view-refresh-symbolic',
                     'Перезапустить',
                     () => this._control('RestartProfile', name));
-                row.add_suffix(restart);
+                actions.append(restart);
             }
             if (pending === undefined) {
                 const toggle = this._actionButton(
                     isActive ? 'media-playback-stop-symbolic' : 'media-playback-start-symbolic',
                     isActive ? 'Остановить' : 'Запустить',
                     () => this._control(isActive ? 'StopProfile' : 'StartProfile', name));
-                row.add_suffix(toggle);
+                actions.append(toggle);
 
                 const remove = this._actionButton(
                     'edit-delete-symbolic',
                     'Удалить',
                     () => this._confirmRemove(name));
                 remove.add_css_class('destructive-action');
-                row.add_suffix(remove);
+                actions.append(remove);
             }
+            header.append(actions);
+            content.append(header);
+            if (statisticsGrid !== null) {
+                statisticsGrid.grid.set_halign(Gtk.Align.START);
+                content.append(statisticsGrid.grid);
+            }
+            row.set_child(content);
             this._list.append(row);
         }
     }

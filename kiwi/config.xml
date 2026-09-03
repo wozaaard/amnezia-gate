@@ -7,7 +7,7 @@
         <specification>Minimal AmneziaWG proxy root filesystem for systemd-nspawn</specification>
     </description>
     <preferences>
-        <version>0.1.0</version>
+        <version>0.2.0</version>
         <packagemanager>zypper</packagemanager>
         <rpm-excludedocs>false</rpm-excludedocs>
         <type image="squashfs" squashfscompression="zstd" selinux_policy="targeted"/>

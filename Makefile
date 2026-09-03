@@ -1,7 +1,7 @@
 ROOTFS_IMAGE ?= _build/amnezia-gate-rootfs.squashfs
 SELINUX_MODULE ?= _build/amnezia_gate.pp
 SELINUX_FILE_CONTEXTS ?= selinux/amnezia_gate.fc
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 SOURCE_ARCHIVE ?= _build/amnezia-gate-$(VERSION).tar.zst
 RPM_TOPDIR ?= $(CURDIR)/_build/rpmbuild
 PREFIX ?= /usr

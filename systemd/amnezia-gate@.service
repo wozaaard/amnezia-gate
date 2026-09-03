@@ -4,6 +4,8 @@ Documentation=man:systemd-nspawn(1)
 Requires=amnezia-gate-network.service
 After=amnezia-gate-network.service network-online.target modprobe@tun.service
 Wants=network-online.target modprobe@tun.service
+StartLimitIntervalSec=2min
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,7 +14,7 @@ ExecStartPre=/usr/libexec/amnezia-gate-run prepare %I
 ExecStart=/usr/libexec/amnezia-gate-run run %I
 ExecStopPost=/usr/libexec/amnezia-gate-run cleanup %I
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
 TimeoutStartSec=2min
 TimeoutStopSec=20s
 KillMode=mixed

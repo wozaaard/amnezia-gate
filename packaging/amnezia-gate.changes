@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Thu Sep 03 22:27:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Bump version to 0.2.0.
+- Bound automatic profile restarts to five attempts in two minutes.
+- Reset the systemd start limiter on an explicit start or restart request.
+- Export aggregate AWG transfer counters and latest handshake timestamps over
+  D-Bus and display totals and measured rates in the GNOME application.
+
+-------------------------------------------------------------------
 Mon Aug 31 19:19:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Declare the file-context type required by the SELinux policy package.

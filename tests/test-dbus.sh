@@ -9,8 +9,11 @@ fi
 project_dir=$(cd "$(dirname "$0")/.." && pwd)
 test_root=$(mktemp -d)
 daemon_pid=
+statistics_pid=
 cleanup() {
     [[ -z $daemon_pid ]] || kill "$daemon_pid" 2>/dev/null || true
+    [[ -z $statistics_pid ]] || kill "$statistics_pid" 2>/dev/null || true
+    [[ -z $statistics_pid ]] || wait "$statistics_pid" 2>/dev/null || true
     rm -rf -- "$test_root"
 }
 trap cleanup EXIT
@@ -25,6 +28,48 @@ if [[ ${1:-} == show ]]; then
 fi
 EOF
 chmod 0755 "$test_root/bin/systemctl"
+
+statistics_socket="$test_root/run/london/awg0.sock"
+mkdir -p "${statistics_socket%/*}"
+python3 - "$statistics_socket" <<'PY' &
+import os
+import socket
+import sys
+
+path = sys.argv[1]
+if os.path.exists(path):
+    os.unlink(path)
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+    server.bind(path)
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            request = bytearray()
+            while not request.endswith(b'\n\n'):
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                request.extend(chunk)
+            connection.sendall(
+                b'private_key=test-interface-private-key\n'
+                b'public_key=test-peer-one\n'
+                b'last_handshake_time_sec=1700000000\n'
+                b'tx_bytes=1000\n'
+                b'rx_bytes=5000\n'
+                b'public_key=test-peer-two\n'
+                b'last_handshake_time_sec=1699999999\n'
+                b'tx_bytes=234\n'
+                b'rx_bytes=678\n'
+                b'errno=0\n\n'
+            )
+PY
+statistics_pid=$!
+for _ in {1..50}; do
+    [[ -S $statistics_socket ]] && break
+    sleep 0.1
+done
+[[ -S $statistics_socket ]]
 
 cat >"$test_root/London.conf" <<'EOF'
 [Interface]
@@ -48,6 +93,7 @@ export AMNEZIA_PROFILE_CONFIG="$test_root/missing.conf"
 export AMNEZIA_TEST_SYSTEMCTL_LOG="$test_root/systemctl.log"
 export SYSTEMCTL_BIN="$test_root/bin/systemctl"
 export SS_BIN=/usr/bin/true
+export AMNEZIA_GATE_UAPI_ROOT="$test_root/run"
 
 "$project_dir/daemon/amnezia-gate-daemon" &
 daemon_pid=$!
@@ -88,7 +134,12 @@ fi
 list_output=$("$project_dir/client/amneziactl" list)
 grep -q 'active/running' <<<"$list_output"
 
+statistics_output=$("$project_dir/client/amneziactl" stats)
+grep -Eq '^london[[:space:]]+5678[[:space:]]+1234[[:space:]]+1700000000$' \
+    <<<"$statistics_output"
+
 "$project_dir/client/amneziactl" restart london
+grep -q '^reset-failed amnezia-gate@london.service$' "$test_root/systemctl.log"
 grep -q '^restart amnezia-gate@london.service$' "$test_root/systemctl.log"
 
 "$project_dir/client/amneziactl" remove london --yes

@@ -15,6 +15,7 @@ BUS_TYPE = Gio.BusType.SESSION if os.getenv('AMNEZIA_GATE_BUS') == 'session' els
 def usage():
     print('''Usage:
   amneziactl list
+  amneziactl stats
   amneziactl status PROFILE
   amneziactl import CONFIG --name PROFILE [--replace]
   amneziactl start|stop|restart PROFILE
@@ -42,6 +43,12 @@ def print_profiles(profiles):
         print(f'{name:20} {socks:<8} {http:<8} {active}/{sub}')
 
 
+def print_statistics(statistics):
+    print(f'{"PROFILE":20} {"RECEIVED":>16} {"SENT":>16} {"HANDSHAKE":>12}')
+    for name, received, sent, handshake in statistics:
+        print(f'{name:20} {received:>16} {sent:>16} {handshake:>12}')
+
+
 def main(argv):
     arguments = list(argv)
     command = arguments.pop(0) if arguments else None
@@ -55,6 +62,11 @@ def main(argv):
             raise RuntimeError('list does not accept arguments')
         profiles, = call(connection, 'ListProfiles', None, '(a(suuss))')
         print_profiles(profiles)
+    elif command == 'stats':
+        if arguments:
+            raise RuntimeError('stats does not accept arguments')
+        statistics, = call(connection, 'GetStatistics', None, '(a(sttt))')
+        print_statistics(statistics)
     elif command == 'status':
         if len(arguments) != 1:
             raise RuntimeError('status requires PROFILE')

@@ -68,6 +68,7 @@ chmod 0755 \
 export AMNEZIA_PROFILE_TESTING=1
 export AMNEZIA_PROFILE_ROOT="$test_dir/profiles"
 export AMNEZIA_PROFILE_DEVICE_ROOT="$test_dir/dev"
+export AMNEZIA_PROFILE_RUNTIME_ROOT="$test_dir/run"
 export AMNEZIA_TEST_IP_LOG="$test_dir/ip.log"
 export AMNEZIA_TEST_IPTABLES_LOG="$test_dir/iptables.log"
 export AMNEZIA_TEST_NFT_LOG="$test_dir/nft.log"
@@ -114,7 +115,15 @@ grep -Fqx -- '--kill-signal=SIGRTMIN+3' "$test_dir/nspawn.log"
 ! grep -Fq -- '--restrict-address-families=' "$test_dir/nspawn.log"
 grep -Fqx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
     "$project_dir/systemd/amnezia-gate@.service"
+grep -Fqx 'StartLimitIntervalSec=2min' \
+    "$project_dir/systemd/amnezia-gate@.service"
+grep -Fqx 'StartLimitBurst=5' \
+    "$project_dir/systemd/amnezia-gate@.service"
+grep -Fqx 'RestartSec=10s' \
+    "$project_dir/systemd/amnezia-gate@.service"
 grep -Fqx -- "--bind=$test_dir/dev/London-tun:/dev/net/tun" \
+    "$test_dir/nspawn.log"
+grep -Fqx -- "--bind=$test_dir/run/London:/run/amneziawg" \
     "$test_dir/nspawn.log"
 grep -Fqx -- "--bind-ro=$test_dir/profiles/London/resolv.conf:/etc/resolv.conf" \
     "$test_dir/nspawn.log"

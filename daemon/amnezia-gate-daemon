@@ -2,6 +2,7 @@
 
 import os
 import re
+import socket
 import subprocess
 import tempfile
 
@@ -17,12 +18,14 @@ INTERFACE = 'org.amnezia.Gate1.Manager'
 ERROR_PREFIX = f'{BUS_NAME}.Error'
 PROFILE_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9-]{0,31}$')
 MAX_CONFIG_BYTES = 1024 * 1024
+MAX_UAPI_BYTES = 1024 * 1024
 
 TESTING = os.getenv('AMNEZIA_GATE_TESTING') == '1'
 BUS_TYPE = Gio.BusType.SESSION if os.getenv('AMNEZIA_GATE_BUS') == 'session' else Gio.BusType.SYSTEM
 PROFILE_ROOT = os.getenv('AMNEZIA_PROFILE_ROOT', '/etc/amnezia/profiles')
 BACKEND = os.getenv('AMNEZIA_GATE_PROFILE_BIN', '/usr/libexec/amnezia-gate-profile')
 SYSTEMCTL = os.getenv('SYSTEMCTL_BIN', '/usr/bin/systemctl')
+UAPI_ROOT = os.getenv('AMNEZIA_GATE_UAPI_ROOT', '/run/amnezia-gate/profiles')
 INTERFACE_FILE = os.getenv(
     'AMNEZIA_GATE_INTERFACE_FILE',
     '/usr/share/dbus-1/interfaces/org.amnezia.Gate1.xml',
@@ -115,6 +118,62 @@ class Manager:
                 profiles.append(self.profile(entry.name))
         return sorted(profiles, key=lambda profile: profile[0])
 
+    @staticmethod
+    def read_statistics(name):
+        path = os.path.join(UAPI_ROOT, name, 'awg0.sock')
+        response = bytearray()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1)
+            client.connect(path)
+            client.sendall(b'get=1\n\n')
+            while True:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                response.extend(chunk)
+                if len(response) > MAX_UAPI_BYTES:
+                    raise RuntimeError('AWG UAPI response exceeds 1 MiB')
+                if response.endswith(b'\n\n'):
+                    break
+
+        received = 0
+        sent = 0
+        latest_handshake = 0
+        errno = None
+        for line in response.decode('ascii').splitlines():
+            key, separator, value = line.partition('=')
+            if not separator:
+                continue
+            if key == 'rx_bytes':
+                received += int(value)
+            elif key == 'tx_bytes':
+                sent += int(value)
+            elif key == 'last_handshake_time_sec':
+                latest_handshake = max(latest_handshake, int(value))
+            elif key == 'errno':
+                errno = int(value)
+        if errno != 0:
+            raise RuntimeError(f'AWG UAPI returned errno {errno}')
+        return name, received, sent, latest_handshake
+
+    def statistics(self):
+        statistics = []
+        if not os.path.isdir(UAPI_ROOT):
+            return statistics
+        with os.scandir(UAPI_ROOT) as entries:
+            names = sorted(
+                entry.name for entry in entries
+                if entry.is_dir(follow_symlinks=False)
+                and PROFILE_PATTERN.fullmatch(entry.name) is not None
+            )
+        for name in names:
+            try:
+                statistics.append(self.read_statistics(name))
+            except (OSError, UnicodeError, ValueError, RuntimeError):
+                # A profile can disappear or restart while a snapshot is read.
+                continue
+        return statistics
+
     def changed(self):
         self.connection.emit_signal(None, OBJECT_PATH, INTERFACE, 'Changed', None)
 
@@ -152,6 +211,8 @@ class Manager:
                 invocation.return_value(GLib.Variant('(a(suuss))', (self.profiles(),)))
             elif method_name == 'GetProfile':
                 invocation.return_value(GLib.Variant('((suuss))', (self.profile(arguments[0]),)))
+            elif method_name == 'GetStatistics':
+                invocation.return_value(GLib.Variant('(a(sttt))', (self.statistics(),)))
             elif method_name == 'ImportProfile':
                 name, configuration, replace = arguments
                 self.authorize(invocation, 'org.amnezia.gate.configure')

@@ -14,6 +14,7 @@ source_image=${1:-$project_dir/_build/amnezia-gate-rootfs.squashfs}
 
 test_dir=$(mktemp -d /tmp/amnezia-gate-smoke.XXXXXX)
 profile_root=$test_dir/profiles
+runtime_root=$test_dir/run
 rootfs_image=$test_dir/rootfs.squashfs
 smoke_unit=amnezia-gate-smoke.service
 lan_namespace=amnezia-gate-smoke-lan
@@ -26,6 +27,7 @@ cleanup() {
     systemctl stop "$smoke_unit" >/dev/null 2>&1
     systemctl reset-failed "$smoke_unit" >/dev/null 2>&1
     AMNEZIA_PROFILE_ROOT="$profile_root" \
+        AMNEZIA_PROFILE_RUNTIME_ROOT="$runtime_root" \
         "$project_dir/host/amnezia-gate-run" cleanup Smoke >/dev/null 2>&1
     ip link delete dev "$lan_host_interface" >/dev/null 2>&1
     ip netns delete "$lan_namespace" >/dev/null 2>&1
@@ -72,6 +74,7 @@ chmod 0600 "$profile_root/Smoke/profile.env"
 
 printf '1\n' >/proc/sys/net/ipv4/ip_forward
 AMNEZIA_PROFILE_ROOT="$profile_root" \
+    AMNEZIA_PROFILE_RUNTIME_ROOT="$runtime_root" \
     "$project_dir/host/amnezia-gate-run" prepare Smoke
 
 ip netns delete "$lan_namespace" >/dev/null 2>&1 || true
@@ -100,6 +103,7 @@ systemd-run \
     --property='DeviceAllow=/dev/loop-control rw' \
     --property='DeviceAllow=block-loop rw' \
     --setenv="AMNEZIA_PROFILE_ROOT=$profile_root" \
+    --setenv="AMNEZIA_PROFILE_RUNTIME_ROOT=$runtime_root" \
     /bin/bash "$project_dir/host/amnezia-gate-run" run Smoke >/dev/null
 
 ready=0
@@ -132,6 +136,7 @@ fi
 
 /usr/sbin/nft list table ip amnezia_gate_1000 >/dev/null
 /usr/sbin/ip -4 address show dev az1000h | grep -Fq '10.231.15.161/30'
+[[ -S $runtime_root/Smoke/awg0.sock ]]
 machinectl show amnezia-Smoke --property=Leader --value | grep -Eq '^[0-9]+$'
 /usr/sbin/iptables -w -C FORWARD \
     -i az1000h \
