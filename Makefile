@@ -1,7 +1,7 @@
 ROOTFS_IMAGE ?= _build/amnezia-gate-rootfs.squashfs
 SELINUX_MODULE ?= _build/amnezia_gate.pp
 SELINUX_FILE_CONTEXTS ?= selinux/amnezia_gate.fc
-VERSION ?= 0.2.0
+VERSION ?= 0.3.0
 SOURCE_ARCHIVE ?= _build/amnezia-gate-$(VERSION).tar.zst
 RPM_TOPDIR ?= $(CURDIR)/_build/rpmbuild
 PREFIX ?= /usr
@@ -18,7 +18,7 @@ METAINFO_DIR ?= /usr/share/metainfo
 ICON_DIR ?= /usr/share/icons/hicolor/scalable/apps
 SELINUX_PACKAGE_DIR ?= /usr/share/selinux/packages/targeted
 
-.PHONY: rootfs selinux source rpm test smoke install install-selinux
+.PHONY: rootfs selinux source rpm test smoke install install-resolved install-selinux
 
 KIWI_SOURCES := $(shell find kiwi -type f -print)
 
@@ -54,6 +54,7 @@ test: selinux
 	bash tests/test-install.sh
 	bash tests/test-import.sh
 	bash tests/test-runner.sh
+	bash tests/test-dns.sh
 	bash tests/test-dbus.sh
 
 smoke:
@@ -81,6 +82,14 @@ install:
 	install -d -m 0700 $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles
 	@test -e $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles.conf || \
 		install -m 0644 config/profiles.conf $(DESTDIR)$(SYSCONFDIR)/amnezia/profiles.conf
+	@if test -z "$(DESTDIR)"; then systemctl daemon-reload; fi
+
+install-resolved:
+	install -D -m 0755 host/amnezia-gate-resolved $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-resolved
+	install -D -m 0644 systemd/amnezia-gate-resolved-restore.service \
+		$(DESTDIR)$(SYSTEMD_UNIT_DIR)/amnezia-gate-resolved-restore.service
+	install -D -m 0644 systemd/systemd-resolved.service.d/amnezia-gate-resolved.conf \
+		$(DESTDIR)$(SYSTEMD_UNIT_DIR)/systemd-resolved.service.d/amnezia-gate-resolved.conf
 	@if test -z "$(DESTDIR)"; then systemctl daemon-reload; fi
 
 install-selinux: selinux

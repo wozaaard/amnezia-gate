@@ -3,7 +3,7 @@
 #
 
 Name:           amnezia-gate
-Version:        0.2.0
+Version:        0.3.0
 Release:        0
 %global debug_package %{nil}
 %global selinuxtype targeted
@@ -38,6 +38,7 @@ Requires:       python3-gobject
 Requires:       systemd-container
 Requires:       typelib-1_0-Polkit-1_0
 Requires:       (%{name}-selinux if selinux-policy-base)
+Recommends:     (amnezia-gate-resolved if systemd-resolved)
 %{?systemd_requires}
 %add_sysuser g amnezia - -
 
@@ -58,6 +59,17 @@ Requires:       container-selinux
 %description selinux
 Provides the SELinux policy module and file contexts required to run
 Amnezia Gate containers on an SELinux host.
+
+%package -n amnezia-gate-resolved
+Summary:        systemd-resolved backend for Amnezia Gate
+BuildArch:      noarch
+Requires:       %{name} = %{version}-%{release}
+Requires:       systemd-resolved
+
+%description -n amnezia-gate-resolved
+Provides optional system DNS routing through a selected Amnezia Gate profile
+and restores the volatile systemd-resolved per-link configuration after the
+resolver service is restarted.
 
 %package gnome
 Summary:        GNOME application for managing Amnezia Gate profiles
@@ -84,6 +96,8 @@ desktop-file-validate gui/org.amnezia.Gate.desktop
 %install
 make install \
     DESTDIR=%{buildroot}
+make install-resolved \
+    DESTDIR=%{buildroot}
 make install-selinux \
     DESTDIR=%{buildroot} \
     SELINUX_MODULE="$PWD/_build/amnezia_gate.pp"
@@ -109,6 +123,21 @@ install -D -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/%{name}/rootfs.verified
 %postun
 %service_del_postun amnezia-gate-daemon.service
 %service_del_postun_without_restart amnezia-gate-network.service
+
+%pre -n amnezia-gate-resolved
+%service_add_pre amnezia-gate-resolved-restore.service
+
+%post -n amnezia-gate-resolved
+%service_add_post amnezia-gate-resolved-restore.service
+
+%preun -n amnezia-gate-resolved
+if [ "$1" -eq 0 ]; then
+    %{_libexecdir}/amnezia-gate-resolved off || :
+fi
+%service_del_preun amnezia-gate-resolved-restore.service
+
+%postun -n amnezia-gate-resolved
+%service_del_postun_without_restart amnezia-gate-resolved-restore.service
 
 %pre selinux
 %selinux_relabel_pre -s %{selinuxtype}
@@ -154,6 +183,12 @@ fi
 %config(noreplace) %{_sysconfdir}/amnezia/profiles.conf
 %dir %{_sysconfdir}/amnezia
 %dir %attr(0700,root,root) %{_sysconfdir}/amnezia/profiles
+
+%files -n amnezia-gate-resolved
+%{_libexecdir}/amnezia-gate-resolved
+%{_unitdir}/amnezia-gate-resolved-restore.service
+%dir %{_unitdir}/systemd-resolved.service.d
+%{_unitdir}/systemd-resolved.service.d/amnezia-gate-resolved.conf
 
 %files selinux
 %dir %{_datadir}/selinux/packages/%{selinuxtype}

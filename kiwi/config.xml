@@ -7,10 +7,10 @@
         <specification>Minimal AmneziaWG proxy root filesystem for systemd-nspawn</specification>
     </description>
     <preferences>
-        <version>0.2.0</version>
+        <version>0.3.0</version>
         <packagemanager>zypper</packagemanager>
         <rpm-excludedocs>false</rpm-excludedocs>
-        <type image="squashfs" squashfscompression="zstd" selinux_policy="targeted"/>
+        <type image="squashfs" squashfscompression="zstd"/>
     </preferences>
     <repository type="rpm-md">
         <source path="obsrepositories:/"/>
@@ -19,6 +19,7 @@
         <package name="openSUSE-release"/>
         <package name="bash"/>
         <package name="ca-certificates"/>
+        <package name="ca-certificates-mozilla"/>
         <package name="container-selinux"/>
         <package name="coreutils"/>
         <package name="dante-server"/>
@@ -28,6 +29,7 @@
         <package name="policycoreutils"/>
         <package name="selinux-policy-targeted"/>
         <package name="tinyproxy"/>
+        <package name="unbound"/>
         <package name="amneziawg-go"/>
         <package name="amneziawg-tools"/>
     </packages>

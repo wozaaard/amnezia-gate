@@ -1,0 +1,13 @@
+[Unit]
+Description=Restore Amnezia Gate systemd-resolved integration
+After=systemd-resolved.service
+ConditionPathExists=/etc/amnezia/dns-profile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/amnezia-gate-resolved restore
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK

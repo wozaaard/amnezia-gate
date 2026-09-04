@@ -1,4 +1,19 @@
 -------------------------------------------------------------------
+Thu Sep 03 23:58:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Bump version to 0.3.0.
+- Add a validating unbound resolver with strict DNS-over-TLS forwarding to
+  every isolated profile.
+- Add optional systemd-resolved integration with one persistent system DNS
+  profile selected through D-Bus, CLI or the GNOME application.
+- Split host integration into the optional amnezia-gate-resolved backend and restore
+  its volatile per-link state whenever systemd-resolved starts.
+- Recommend the backend conditionally when systemd-resolved is already present,
+  without pulling a new resolver into systems that do not use it.
+- Hide DNS controls in the GNOME application when no DNS backend is installed.
+- Keep DNS integration independent of NetworkManager, wicked and networkd.
+
+-------------------------------------------------------------------
 Thu Sep 03 22:27:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Bump version to 0.2.0.

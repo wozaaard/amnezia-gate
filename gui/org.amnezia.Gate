@@ -28,6 +28,14 @@ class GateApplication extends Adw.Application {
         this._statistics = new Map();
         this._statisticsPending = false;
         this._statisticsSource = 0;
+        this._dnsBackend = '';
+        this._dnsButton = null;
+        this._dnsButtonLabel = null;
+        this._dnsMenu = null;
+        this._dnsPopover = null;
+        this._dnsProfile = '';
+        this._dnsState = 'off';
+        this._dnsPending = false;
     }
 
     vfunc_activate() {
@@ -93,7 +101,48 @@ class GateApplication extends Adw.Application {
         const importButton = new Gtk.Button({label: 'Импорт'});
         importButton.add_css_class('suggested-action');
         importButton.connect('clicked', () => this._chooseConfig());
-        header.pack_end(importButton);
+
+        this._dnsButtonLabel = new Gtk.Label({label: 'DNS: выкл.'});
+        const dnsButtonContent = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 6,
+        });
+        dnsButtonContent.append(new Gtk.Image({icon_name: 'network-server-symbolic'}));
+        dnsButtonContent.append(this._dnsButtonLabel);
+        this._dnsMenu = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 2,
+            margin_top: 6,
+            margin_bottom: 6,
+            margin_start: 6,
+            margin_end: 6,
+        });
+        this._dnsPopover = new Gtk.Popover({child: this._dnsMenu});
+        this._dnsButton = new Gtk.MenuButton({visible: false});
+        this._dnsButton.set_child(dnsButtonContent);
+        this._dnsButton.set_popover(this._dnsPopover);
+        this._dnsButton.add_css_class('flat');
+
+        const actionButtons = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 6,
+        });
+        actionButtons.append(this._dnsButton);
+        actionButtons.append(importButton);
+        const actionRow = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            margin_top: 6,
+            margin_bottom: 6,
+            margin_start: 18,
+            margin_end: 18,
+        });
+        actionRow.append(new Gtk.Box({hexpand: true}));
+        actionRow.append(actionButtons);
+        const actionClamp = new Adw.Clamp({
+            maximum_size: 720,
+            tightening_threshold: 520,
+            child: actionRow,
+        });
 
         this._list = new Gtk.ListBox({
             selection_mode: Gtk.SelectionMode.NONE,
@@ -114,6 +163,7 @@ class GateApplication extends Adw.Application {
 
         this._toolbar = new Adw.ToolbarView();
         this._toolbar.add_top_bar(header);
+        this._toolbar.add_top_bar(actionClamp);
         this._toolbar.set_content(scrolled);
 
         this._toasts = new Adw.ToastOverlay({child: this._toolbar});
@@ -311,6 +361,113 @@ class GateApplication extends Adw.Application {
 
     _refresh() {
         this._call(
+            'GetDnsBackend',
+            null,
+            ([backend]) => {
+                this._dnsBackend = backend;
+                if (backend !== '') {
+                    this._refreshDns();
+                    return;
+                }
+                this._dnsProfile = '';
+                this._dnsState = 'off';
+                this._updateDnsControl();
+                this._refreshProfiles();
+            },
+            () => {
+                this._dnsBackend = '';
+                this._dnsProfile = '';
+                this._dnsState = 'unavailable';
+                this._updateDnsControl();
+                this._refreshProfiles();
+            },
+            false);
+    }
+
+    _refreshDns() {
+        this._call(
+            'GetDnsProfile',
+            null,
+            ([profile, state]) => {
+                this._dnsProfile = profile;
+                this._dnsState = state;
+                this._updateDnsControl();
+                this._refreshProfiles();
+            },
+            () => {
+                this._dnsProfile = '';
+                this._dnsState = 'unavailable';
+                this._updateDnsControl();
+                this._refreshProfiles();
+            },
+            false);
+    }
+
+    _updateDnsControl() {
+        if (this._dnsButton === null)
+            return;
+        const available = this._dnsBackend !== '';
+        this._dnsButton.set_visible(available);
+        if (!available)
+            return;
+
+        let label = 'DNS: выкл.';
+        if (this._dnsProfile !== '')
+            label = `DNS: ${this._dnsProfile}`;
+        else if (this._dnsState === 'unavailable')
+            label = 'DNS: ошибка';
+        this._dnsButtonLabel.set_label(label);
+        this._dnsButton.set_sensitive(!this._dnsPending);
+        this._dnsButton.remove_css_class('suggested-action');
+        this._dnsButton.remove_css_class('destructive-action');
+        if (this._dnsState === 'active')
+            this._dnsButton.add_css_class('suggested-action');
+        else if (this._dnsState === 'unavailable')
+            this._dnsButton.add_css_class('destructive-action');
+
+        const tooltip = {
+            active: `Системный DNS через профиль ${this._dnsProfile}`,
+            waiting: `Профиль ${this._dnsProfile} выбран; ожидается его запуск`,
+            unavailable: 'DNS backend или resolver выбранного профиля недоступен',
+            off: 'Системный DNS через Amnezia Gate отключён',
+        }[this._dnsState] ?? 'Системный DNS через Amnezia Gate';
+        this._dnsButton.set_tooltip_text(tooltip);
+
+        for (let child = this._dnsMenu.get_first_child(); child !== null;
+            child = this._dnsMenu.get_first_child())
+            this._dnsMenu.remove(child);
+
+        const choices = [['', 'Отключить']];
+        for (const name of [...this._profiles.keys()].sort())
+            choices.push([name, name]);
+        for (const [name, choiceLabel] of choices) {
+            const content = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 12,
+            });
+            content.append(new Gtk.Label({
+                label: choiceLabel,
+                xalign: 0,
+                hexpand: true,
+            }));
+            const selected = name === ''
+                ? this._dnsProfile === '' && this._dnsState === 'off'
+                : this._dnsProfile === name;
+            if (selected)
+                content.append(new Gtk.Image({icon_name: 'object-select-symbolic'}));
+            const choice = new Gtk.Button({child: content});
+            choice.add_css_class('flat');
+            choice.connect('clicked', () => {
+                this._dnsPopover.popdown();
+                if (this._dnsProfile !== name)
+                    this._setDnsProfile(name);
+            });
+            this._dnsMenu.append(choice);
+        }
+    }
+
+    _refreshProfiles() {
+        this._call(
             'ListProfiles',
             null,
             ([profiles]) => this._render(profiles),
@@ -327,6 +484,7 @@ class GateApplication extends Adw.Application {
             this._list.remove(child);
 
         this._profiles = new Map(profiles.map(profile => [profile[0], profile]));
+        this._updateDnsControl();
         this._rows = new Map();
         if (profiles.length === 0) {
             this._showStatus('network-vpn-symbolic', 'Профилей пока нет',
@@ -447,6 +605,29 @@ class GateApplication extends Adw.Application {
             },
             () => {
                 this._pending.delete(name);
+                this._renderCurrent();
+            });
+    }
+
+    _setDnsProfile(name) {
+        if (this._dnsPending)
+            return;
+        this._dnsPending = true;
+        this._renderCurrent();
+        this._call(
+            'SetDnsProfile',
+            new GLib.Variant('(s)', [name]),
+            ([profile, state]) => {
+                this._dnsProfile = profile;
+                this._dnsState = state;
+                this._dnsPending = false;
+                this._showToast(profile
+                    ? `Системный DNS: ${profile}`
+                    : 'Системный DNS отключён');
+                this._renderCurrent();
+            },
+            () => {
+                this._dnsPending = false;
                 this._renderCurrent();
             });
     }

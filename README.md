@@ -19,6 +19,7 @@ nft DNAT/SNAT ── azNh 10.231.x.y/30
              systemd-nspawn amnezia-PROFILE
                host0  ── outer route до endpoint и LAN
                awg0   ── default route, fail-closed
+               unbound ── :53, strict DoT through awg0
                sockd  ── :1080
                tinyproxy ── :10080
 ```
@@ -73,6 +74,65 @@ endpoint. GNOME application получает срезы раз в две сек�
 вычисляется по фактическому monotonic time между успешно полученными срезами.
 Счётчики начинаются заново после перезапуска контейнера.
 
+## DNS
+
+После поднятия `awg0` каждый контейнер запускает собственный validating
+`unbound`. Локальные Dante и tinyproxy используют его через `127.0.0.1`, а
+upstream-запросы отправляются только по DNS-over-TLS через tunnel default
+route. Resolver также слушает guest address профильного veth, но принимает
+запросы только из соответствующего `/30`.
+
+Bootstrap-серверы из `DNS` импортируемого AWG-конфига используются только до
+поднятия туннеля. DoT upstream задаются глобально при импорте профиля:
+
+```bash
+DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net,149.112.112.112@853#dns.quad9.net
+```
+
+Опциональный backend `amnezia-gate-resolved` позволяет направить системный DNS
+хоста в один явно выбранный профиль:
+
+```bash
+amneziactl dns check
+amneziactl dns use tallin
+amneziactl dns status
+amneziactl dns off
+```
+
+Backend использует напрямую D-Bus API `systemd-resolved`: для `azNh`
+регистрируются guest resolver и catch-all routing domain `~.`. NetworkManager,
+wicked и systemd-networkd не вызываются и не конфигурируются. Выбор хранится в
+`/etc/amnezia/dns-profile`, восстанавливается при следующем старте профиля и
+сбрасывается при его удалении. Отдельный oneshot unit восстанавливает per-link
+настройки после перезапуска `systemd-resolved`. Если backend не установлен,
+GNOME application не показывает действия для системного DNS.
+
+Уже запущенный контейнер продолжает использовать rootfs, с которым он был
+создан. После обновления с версии без встроенного resolver такой профиль нужно
+перезапустить. `amnezia-gate-resolved` проверяет доступность TCP/53 перед выбором и
+не публикует `~.`, пока новый resolver не отвечает, поэтому старый контейнер не
+превращает системный DNS в black hole.
+
+Функция доступна, только если `systemd-resolved` уже является системным
+resolver: его service отвечает, а `/etc/resolv.conf` использует stub
+`127.0.0.53`. Backend не включает `systemd-resolved` и не меняет ownership
+`/etc/resolv.conf`. При остановке выбранного профиля его per-link DNS исчезает,
+но выбор сохраняется; до следующего старта действует штатный DNS fallback
+хоста. Strict/fail-closed host mode пока не реализован.
+
+Для openSUSE интеграцию можно подготовить явно:
+
+```bash
+sudo zypper --no-refresh install amnezia-gate-resolved
+sudo systemctl enable --now systemd-resolved.service
+sudo ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+amneziactl dns check
+```
+
+Перед заменой `/etc/resolv.conf` следует сохранить его текущую версию. Пакет
+`amnezia-gate-resolved` устанавливает нужную зависимость, но не выполняет эти
+системные изменения сам.
+
 ## Сборка RPM
 
 Требуется openSUSE Tumbleweed, KIWI NG и `squashfs-tools`:
@@ -89,16 +149,24 @@ make rpm
 Результат:
 
 ```text
-_build/rpmbuild/RPMS/x86_64/amnezia-gate-0.2.0-0.x86_64.rpm
-_build/rpmbuild/RPMS/noarch/amnezia-gate-gnome-0.2.0-0.noarch.rpm
-_build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.2.0-0.noarch.rpm
+_build/rpmbuild/RPMS/x86_64/amnezia-gate-0.3.0-0.x86_64.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-resolved-0.3.0-0.noarch.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-gnome-0.3.0-0.noarch.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.3.0-0.noarch.rpm
 ```
 
 `amnezia-gate` содержит service, CLI и container image. Опциональное GNOME
 приложение вместе с GTK/libadwaita dependencies вынесено в
-`amnezia-gate-gnome`. SELinux policy вынесена в
-`amnezia-gate-selinux`; zypper установит его вместе с основным пакетом, если в системе
-есть `selinux-policy-base`.
+`amnezia-gate-gnome`. Интеграция системного DNS вынесена в
+`amnezia-gate-resolved`. SELinux policy находится в `amnezia-gate-selinux`; zypper
+установит его вместе с основным пакетом, если в системе есть
+`selinux-policy-base`.
+
+Основной пакет рекомендует `amnezia-gate-resolved`, только когда в системе уже
+есть `systemd-resolved`. Поэтому стандартная установка zypper добавляет backend
+на подготовленной системе, но не затягивает новый системный resolver туда, где
+он не используется. Явная установка `amnezia-gate-resolved` по-прежнему
+установит `systemd-resolved` как обязательную зависимость backend.
 
 Rootfs декларативно собирается KIWI из `repo-oss` и AmneziaWG repository.
 Описание находится в `kiwi/config.xml`; вместе с squashfs сохраняются KIWI
@@ -134,6 +202,7 @@ amneziactl import ~/Downloads/London.conf --name london
 amneziactl import ~/Downloads/profile.conf --name site-msk-1
 amneziactl list
 amneziactl stats
+amneziactl dns status
 amneziactl restart london
 ```
 
@@ -184,15 +253,18 @@ Importer:
 systemd units:
 
 ```bash
-rpm -q amnezia-gate amnezia-gate-gnome
+rpm -q amnezia-gate amnezia-gate-resolved amnezia-gate-gnome
 amneziactl list
+amneziactl dns status
 systemctl --no-pager --full status \
   amnezia-gate-daemon.service \
   amnezia-gate-network.service \
+  amnezia-gate-resolved-restore.service \
   'amnezia-gate@*.service'
 journalctl -b --no-pager \
   -u amnezia-gate-daemon.service \
   -u amnezia-gate-network.service \
+  -u amnezia-gate-resolved-restore.service \
   -u 'amnezia-gate@*'
 ```
 
@@ -232,13 +304,16 @@ private и preshared keys. Приведённые выше команды клю
   `amneziawg-go` для контроля его удаления;
 - `DevicePolicy=closed` пропускает только TUN, capability set сокращён до
   необходимого payload;
-- rootfs запускается через `--image` и `--volatile=overlay`, профильный конфиг
-  и resolver монтируются read-only;
+- rootfs запускается через `--image` и `--volatile=overlay`; AWG-конфиг
+  монтируется read-only, а отдельный resolver-файл writable только для
+  переключения bootstrap DNS на container-local unbound;
 - address families ограничены `AF_UNIX`, `AF_INET`, `AF_INET6` и `AF_NETLINK`.
 
 ## Ограничения
 
 - Outer endpoint пока должен резолвиться в IPv4.
+- Системная DNS-интеграция требует заранее настроенный `systemd-resolved` stub;
+  автоматическая настройка netconfig/dnsmasq пока отсутствует.
 - Наружу публикуются TCP SOCKS5 и HTTP proxy. SOCKS5 UDP ASSOCIATE потребует
   отдельного диапазона UDP relay ports.
 - Существующие `awg-quick@*`, `awg-sock@*` и `tinyproxy.service` автоматически

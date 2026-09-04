@@ -11,6 +11,19 @@
     <method name="GetStatistics">
       <arg name="statistics" type="a(sttt)" direction="out"/>
     </method>
+    <method name="GetDnsBackend">
+      <arg name="backend" type="s" direction="out"/>
+    </method>
+    <method name="GetDnsProfile">
+      <arg name="profile" type="s" direction="out"/>
+      <arg name="state" type="s" direction="out"/>
+    </method>
+    <method name="CheckDnsIntegration"/>
+    <method name="SetDnsProfile">
+      <arg name="profile" type="s" direction="in"/>
+      <arg name="selected" type="s" direction="out"/>
+      <arg name="state" type="s" direction="out"/>
+    </method>
     <method name="ImportProfile">
       <arg name="name" type="s" direction="in"/>
       <arg name="configuration" type="s" direction="in"/>

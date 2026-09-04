@@ -16,6 +16,10 @@ def usage():
     print('''Usage:
   amneziactl list
   amneziactl stats
+  amneziactl dns status
+  amneziactl dns check
+  amneziactl dns use PROFILE
+  amneziactl dns off
   amneziactl status PROFILE
   amneziactl import CONFIG --name PROFILE [--replace]
   amneziactl start|stop|restart PROFILE
@@ -67,6 +71,32 @@ def main(argv):
             raise RuntimeError('stats does not accept arguments')
         statistics, = call(connection, 'GetStatistics', None, '(a(sttt))')
         print_statistics(statistics)
+    elif command == 'dns':
+        operation = arguments.pop(0) if arguments else None
+        if operation == 'status' and not arguments:
+            profile, state = call(connection, 'GetDnsProfile', None, '(ss)')
+        elif operation == 'check' and not arguments:
+            call(connection, 'CheckDnsIntegration', None, '()')
+            print('DNS integration is ready')
+            return 0
+        elif operation == 'use' and len(arguments) == 1:
+            profile, state = call(
+                connection,
+                'SetDnsProfile',
+                GLib.Variant('(s)', (arguments[0],)),
+                '(ss)',
+            )
+        elif operation == 'off' and not arguments:
+            profile, state = call(
+                connection,
+                'SetDnsProfile',
+                GLib.Variant('(s)', ('',)),
+                '(ss)',
+            )
+        else:
+            raise RuntimeError('dns requires check, status, use PROFILE or off')
+        print(f'{"PROFILE":20} STATE')
+        print(f'{(profile or "-"):20} {state}')
     elif command == 'status':
         if len(arguments) != 1:
             raise RuntimeError('status requires PROFILE')

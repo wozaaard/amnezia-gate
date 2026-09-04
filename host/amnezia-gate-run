@@ -8,8 +8,8 @@ die() {
 
 action=${1:-}
 profile=${2:-}
-[[ $action == prepare || $action == run || $action == cleanup ]] ||
-    die 'usage: amnezia-gate-run prepare|run|cleanup PROFILE'
+[[ $action == prepare || $action == run || $action == sync-dns || $action == cleanup ]] ||
+    die 'usage: amnezia-gate-run prepare|run|sync-dns|cleanup PROFILE'
 [[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,31}$ ]] || die "invalid profile name: $profile"
 
 ip_bin=${IP_BIN:-/usr/sbin/ip}
@@ -17,6 +17,7 @@ nft_bin=${NFT_BIN:-/usr/sbin/nft}
 iptables_bin=${IPTABLES_BIN:-/usr/sbin/iptables}
 nspawn_bin=${NSPAWN_BIN:-/usr/bin/systemd-nspawn}
 nspawn_register=${NSPAWN_REGISTER:-yes}
+dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-resolved}
 
 profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}
 profile_dir="$profile_root/$profile"
@@ -34,10 +35,11 @@ uapi_dir="$runtime_root/$profile"
 # shellcheck disable=SC1090
 source "$environment_file"
 FORWARD_COMPAT=${FORWARD_COMPAT:-auto}
+DNS_TLS_SERVERS=${DNS_TLS_SERVERS:-9.9.9.9@853#dns.quad9.net,149.112.112.112@853#dns.quad9.net}
 
 required=(
     ROOTFS_IMAGE NETWORK_PREFIX NETWORK_SLOT LISTEN_ADDRESS LAN_CIDRS
-    SOCKS_PORT HTTP_PORT DNS_SERVERS
+    SOCKS_PORT HTTP_PORT DNS_SERVERS DNS_TLS_SERVERS
 )
 for name in "${required[@]}"; do
     [[ -n ${!name:-} ]] || die "$name is missing in $environment_file"
@@ -164,6 +166,10 @@ delete_nft_table() {
 }
 
 cleanup_network() {
+    if [[ -x $dns_backend ]]; then
+        "$dns_backend" unsync "$profile" ||
+            printf 'amnezia-gate-run: warning: failed to remove system DNS for %s\n' "$profile" >&2
+    fi
     cleanup_forward_rules
     delete_nft_table
     delete_interface "$host_interface"
@@ -320,6 +326,20 @@ EOF
     install_forward_rules
 }
 
+sync_dns() {
+    local attempt attempts=${DNS_READY_ATTEMPTS:-40}
+    [[ -x $dns_backend ]] || return 0
+    for ((attempt = 0; attempt < attempts; attempt++)); do
+        if timeout 0.2 bash -c "exec 3<>/dev/tcp/$guest_address/53" 2>/dev/null; then
+            "$dns_backend" sync "$profile" ||
+                printf 'amnezia-gate-run: warning: failed to configure system DNS for %s\n' "$profile" >&2
+            return 0
+        fi
+        sleep 0.25
+    done
+    printf 'amnezia-gate-run: warning: DNS resolver did not become ready for %s\n' "$profile" >&2
+}
+
 run_container() {
     local drop_capabilities
     local -a selinux_args=()
@@ -349,14 +369,15 @@ run_container() {
         --bind="$tun_device:/dev/net/tun" \
         --bind="$uapi_dir:/run/amneziawg" \
         --bind-ro="$awg_config:/config/awg0.conf" \
-        --bind-ro="$resolv_config:/etc/resolv.conf" \
+        --bind="$resolv_config:/etc/resolv.conf" \
         --bind-ro="$tinyproxy_config:/etc/tinyproxy/tinyproxy.conf" \
         --setenv="PROFILE_NAME=$profile" \
         --setenv="LAN_CIDRS=$LAN_CIDRS" \
         --setenv="OUTER_ADDRESS=$guest_address/30" \
         --setenv="OUTER_GATEWAY=$host_address" \
+        --setenv="DNS_TLS_SERVERS=$DNS_TLS_SERVERS" \
         --no-new-privileges=yes \
-        --capability=CAP_NET_ADMIN \
+        --capability=CAP_NET_ADMIN,CAP_NET_BIND_SERVICE \
         --drop-capability="$drop_capabilities" \
         /usr/local/sbin/amnezia-gate-entrypoint
 }
@@ -364,7 +385,7 @@ run_container() {
 drop_capability_list=(
     CAP_AUDIT_CONTROL CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_OVERRIDE
     CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_IPC_OWNER CAP_LEASE
-    CAP_LINUX_IMMUTABLE CAP_MKNOD CAP_NET_BIND_SERVICE CAP_NET_BROADCAST
+    CAP_LINUX_IMMUTABLE CAP_MKNOD CAP_NET_BROADCAST
     CAP_SETFCAP CAP_SETPCAP CAP_SYS_ADMIN CAP_SYS_BOOT CAP_SYS_CHROOT
     CAP_SYS_NICE CAP_SYS_PTRACE CAP_SYS_RESOURCE CAP_SYS_TTY_CONFIG
 )
@@ -375,6 +396,9 @@ case "$action" in
         ;;
     run)
         run_container
+        ;;
+    sync-dns)
+        sync_dns
         ;;
     cleanup)
         "$nspawn_bin" --cleanup --machine="$machine" \

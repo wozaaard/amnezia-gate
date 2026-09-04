@@ -5,6 +5,7 @@ profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}
 global_config=${AMNEZIA_PROFILE_CONFIG:-/etc/amnezia/profiles.conf}
 systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
 ss_bin=${SS_BIN:-ss}
+dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-resolved}
 
 ROOTFS_IMAGE=/usr/lib/amnezia-gate/rootfs.squashfs
 NETWORK_PREFIX=10.231
@@ -14,6 +15,7 @@ FORWARD_COMPAT=auto
 SOCKS_PORT_BASE=1080
 HTTP_PORT_BASE=10080
 DNS_SERVERS=1.1.1.1,1.0.0.1
+DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net,149.112.112.112@853#dns.quad9.net
 
 die() {
     printf 'amnezia-gate-profile: %s\n' "$*" >&2
@@ -220,6 +222,7 @@ write_environment() {
         printf 'SOCKS_PORT=%q\n' "$socks"
         printf 'HTTP_PORT=%q\n' "$http"
         printf 'DNS_SERVERS=%q\n' "$dns"
+        printf 'DNS_TLS_SERVERS=%q\n' "$DNS_TLS_SERVERS"
     } >"$file"
 }
 
@@ -325,6 +328,9 @@ remove_profile() {
     "$systemctl_bin" disable --now "amnezia-gate@${profile}.service" || true
     local target="$profile_root/$profile"
     [[ -d "$target" ]] || die "profile not found: $profile"
+    if [[ -x $dns_backend ]]; then
+        "$dns_backend" forget "$profile"
+    fi
     rm -rf -- "$target"
 }
 

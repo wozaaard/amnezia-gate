@@ -23,6 +23,7 @@ FORWARD_COMPAT=auto
 SOCKS_PORT=1082
 HTTP_PORT=10082
 DNS_SERVERS=1.1.1.1,1.0.0.1
+DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net
 EOF
 
 cat >"$test_dir/bin/ip" <<'EOF'
@@ -59,7 +60,12 @@ cat >"$test_dir/bin/nspawn" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$AMNEZIA_TEST_NSPAWN_LOG"
 EOF
+cat >"$test_dir/bin/dns" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$AMNEZIA_TEST_DNS_LOG"
+EOF
 chmod 0755 \
+    "$test_dir/bin/dns" \
     "$test_dir/bin/ip" \
     "$test_dir/bin/iptables" \
     "$test_dir/bin/nft" \
@@ -73,10 +79,13 @@ export AMNEZIA_TEST_IP_LOG="$test_dir/ip.log"
 export AMNEZIA_TEST_IPTABLES_LOG="$test_dir/iptables.log"
 export AMNEZIA_TEST_NFT_LOG="$test_dir/nft.log"
 export AMNEZIA_TEST_NSPAWN_LOG="$test_dir/nspawn.log"
+export AMNEZIA_TEST_DNS_LOG="$test_dir/dns.log"
 export IP_BIN="$test_dir/bin/ip"
 export IPTABLES_BIN="$test_dir/bin/iptables"
 export NFT_BIN="$test_dir/bin/nft"
 export NSPAWN_BIN="$test_dir/bin/nspawn"
+export AMNEZIA_DNS_BACKEND="$test_dir/bin/dns"
+export DNS_READY_ATTEMPTS=1
 
 if "$project_dir/host/amnezia-gate-run" run new_one; then
     echo 'runner accepted a profile name with an underscore' >&2
@@ -110,7 +119,7 @@ grep -Fqx -- '--setenv=OUTER_ADDRESS=10.231.1.6/30' "$test_dir/nspawn.log"
 grep -Fqx -- '--setenv=OUTER_GATEWAY=10.231.1.5' "$test_dir/nspawn.log"
 grep -Fqx -- '--volatile=overlay' "$test_dir/nspawn.log"
 grep -Fqx -- "--image=$test_dir/rootfs.squashfs" "$test_dir/nspawn.log"
-grep -Fqx -- '--capability=CAP_NET_ADMIN' "$test_dir/nspawn.log"
+grep -Fqx -- '--capability=CAP_NET_ADMIN,CAP_NET_BIND_SERVICE' "$test_dir/nspawn.log"
 grep -Fqx -- '--kill-signal=SIGRTMIN+3' "$test_dir/nspawn.log"
 ! grep -Fq -- '--restrict-address-families=' "$test_dir/nspawn.log"
 grep -Fqx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' \
@@ -121,11 +130,15 @@ grep -Fqx 'StartLimitBurst=5' \
     "$project_dir/systemd/amnezia-gate@.service"
 grep -Fqx 'RestartSec=10s' \
     "$project_dir/systemd/amnezia-gate@.service"
+grep -Fqx 'ExecStartPost=/usr/libexec/amnezia-gate-run sync-dns %I' \
+    "$project_dir/systemd/amnezia-gate@.service"
 grep -Fqx -- "--bind=$test_dir/dev/London-tun:/dev/net/tun" \
     "$test_dir/nspawn.log"
 grep -Fqx -- "--bind=$test_dir/run/London:/run/amneziawg" \
     "$test_dir/nspawn.log"
-grep -Fqx -- "--bind-ro=$test_dir/profiles/London/resolv.conf:/etc/resolv.conf" \
+grep -Fqx -- "--bind=$test_dir/profiles/London/resolv.conf:/etc/resolv.conf" \
+    "$test_dir/nspawn.log"
+grep -Fqx -- '--setenv=DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net' \
     "$test_dir/nspawn.log"
 grep -Fqx -- "--bind-ro=$test_dir/profiles/London/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf" \
     "$test_dir/nspawn.log"
@@ -133,8 +146,15 @@ grep -Fqx 'nameserver 1.1.1.1' "$test_dir/profiles/London/resolv.conf"
 grep -Fqx 'Allow 10.231.1.4/30' "$test_dir/profiles/London/tinyproxy.conf"
 grep -Fqx 'Allow 192.168.50.0/24' "$test_dir/profiles/London/tinyproxy.conf"
 
+# The post-start hook waits until the container resolver accepts TCP before
+# publishing it through systemd-resolved. A closed test port only produces a
+# warning and must not fail the VPN profile.
+"$project_dir/host/amnezia-gate-run" sync-dns London 2>"$test_dir/dns-warning.log"
+grep -Fq 'DNS resolver did not become ready for London' "$test_dir/dns-warning.log"
+
 export AMNEZIA_TEST_IPTABLES_RULES_PRESENT=1
 "$project_dir/host/amnezia-gate-run" cleanup London
+grep -Fqx 'unsync London' "$test_dir/dns.log"
 grep -Fqx -- \
     '-w -D FORWARD -i az65h -m comment --comment amnezia-gate:London -j ACCEPT' \
     "$test_dir/iptables.log"

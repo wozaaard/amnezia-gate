@@ -15,6 +15,7 @@ FORWARD_COMPAT=auto
 SOCKS_PORT_BASE=1080
 HTTP_PORT_BASE=10080
 DNS_SERVERS=9.9.9.9
+DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net
 EOF
 
 cat >"$test_dir/bin/ss" <<'EOF'
@@ -59,6 +60,7 @@ grep -Fqx 'NETWORK_PREFIX=10.231' "$profile/profile.env"
 grep -Fqx 'NETWORK_SLOT=0' "$profile/profile.env"
 grep -Fqx 'FORWARD_COMPAT=auto' "$profile/profile.env"
 grep -Fqx 'DNS_SERVERS=1.1.1.1\,1.0.0.1' "$profile/profile.env"
+grep -Fqx 'DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net' "$profile/profile.env"
 
 # A running profile may retain its own published ports during atomic replace.
 cat >"$test_dir/bin/ss" <<'EOF'

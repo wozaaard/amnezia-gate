@@ -12,6 +12,7 @@ Type=simple
 SELinuxContext=system_u:system_r:container_runtime_t:s0
 ExecStartPre=/usr/libexec/amnezia-gate-run prepare %I
 ExecStart=/usr/libexec/amnezia-gate-run run %I
+ExecStartPost=/usr/libexec/amnezia-gate-run sync-dns %I
 ExecStopPost=/usr/libexec/amnezia-gate-run cleanup %I
 Restart=on-failure
 RestartSec=10s

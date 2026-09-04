@@ -69,6 +69,7 @@ FORWARD_COMPAT=auto
 SOCKS_PORT=19080
 HTTP_PORT=19081
 DNS_SERVERS=1.1.1.1,1.0.0.1
+DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net
 EOF
 chmod 0600 "$profile_root/Smoke/profile.env"
 
@@ -110,6 +111,7 @@ ready=0
 for _ in {1..40}; do
     if timeout 0.5 bash -c 'exec 3<>/dev/tcp/10.231.15.162/1080' 2>/dev/null &&
        timeout 0.5 bash -c 'exec 3<>/dev/tcp/10.231.15.162/10080' 2>/dev/null &&
+       timeout 0.5 bash -c 'exec 3<>/dev/tcp/10.231.15.162/53' 2>/dev/null &&
        timeout 0.5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/19080' 2>/dev/null &&
        timeout 0.5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/19081' 2>/dev/null &&
        ip netns exec "$lan_namespace" \
@@ -153,6 +155,7 @@ fi
 rm -f -- "$test_dir/rootfs.retired.squashfs"
 timeout 0.5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/19080'
 timeout 0.5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/19081'
+timeout 0.5 bash -c 'exec 3<>/dev/tcp/10.231.15.162/53'
 systemctl is-active --quiet "$smoke_unit"
 
 systemctl stop "$smoke_unit"

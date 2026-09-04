@@ -28,6 +28,15 @@ if [[ ${1:-} == show ]]; then
 fi
 EOF
 chmod 0755 "$test_root/bin/systemctl"
+cat >"$test_root/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+cat >"$test_root/bin/resolvectl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod 0755 "$test_root/bin/ip" "$test_root/bin/resolvectl"
 
 statistics_socket="$test_root/run/london/awg0.sock"
 mkdir -p "${statistics_socket%/*}"
@@ -88,10 +97,17 @@ export AMNEZIA_PROFILE_TESTING=1
 export AMNEZIA_GATE_BUS=session
 export AMNEZIA_GATE_INTERFACE_FILE="$project_dir/dbus/org.amnezia.Gate1.xml"
 export AMNEZIA_GATE_PROFILE_BIN="$project_dir/host/amnezia-gate-profile"
+ln -s "$project_dir/host/amnezia-gate-resolved" "$test_root/bin/amnezia-gate-resolved"
+export AMNEZIA_DNS_BACKEND="$test_root/bin/amnezia-gate-resolved"
 export AMNEZIA_PROFILE_ROOT="$test_root/profiles"
+export AMNEZIA_DNS_STATE_FILE="$test_root/dns-profile"
+export AMNEZIA_DNS_SKIP_SYSTEM_CHECK=1
+export AMNEZIA_DNS_SKIP_RESOLVER_CHECK=1
 export AMNEZIA_PROFILE_CONFIG="$test_root/missing.conf"
 export AMNEZIA_TEST_SYSTEMCTL_LOG="$test_root/systemctl.log"
 export SYSTEMCTL_BIN="$test_root/bin/systemctl"
+export IP_BIN="$test_root/bin/ip"
+export RESOLVECTL_BIN="$test_root/bin/resolvectl"
 export SS_BIN=/usr/bin/true
 export AMNEZIA_GATE_UAPI_ROOT="$test_root/run"
 
@@ -138,11 +154,33 @@ statistics_output=$("$project_dir/client/amneziactl" stats)
 grep -Eq '^london[[:space:]]+5678[[:space:]]+1234[[:space:]]+1700000000$' \
     <<<"$statistics_output"
 
+gdbus call --session --dest org.amnezia.Gate1 \
+    --object-path /org/amnezia/Gate1 \
+    --method org.amnezia.Gate1.Manager.GetDnsBackend |
+    grep -Fq "'resolved'"
+dns_output=$("$project_dir/client/amneziactl" dns status)
+grep -Eq '^-[[:space:]]+off$' <<<"$dns_output"
+"$project_dir/client/amneziactl" dns check |
+    grep -Fqx 'DNS integration is ready'
+dns_output=$("$project_dir/client/amneziactl" dns use london)
+grep -Eq '^london[[:space:]]+waiting$' <<<"$dns_output"
+
 "$project_dir/client/amneziactl" restart london
 grep -q '^reset-failed amnezia-gate@london.service$' "$test_root/systemctl.log"
 grep -q '^restart amnezia-gate@london.service$' "$test_root/systemctl.log"
 
 "$project_dir/client/amneziactl" remove london --yes
 [[ ! -e $test_root/profiles/london ]]
+[[ ! -e $test_root/dns-profile ]]
+
+rm "$test_root/bin/amnezia-gate-resolved"
+gdbus call --session --dest org.amnezia.Gate1 \
+    --object-path /org/amnezia/Gate1 \
+    --method org.amnezia.Gate1.Manager.GetDnsBackend |
+    grep -Fq "''"
+if "$project_dir/client/amneziactl" dns status; then
+    echo 'D-Bus API accepted DNS operation without a backend' >&2
+    exit 1
+fi
 
 printf 'D-Bus API tests passed\n'
