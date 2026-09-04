@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 from gi.repository import Gio, GLib
 
@@ -52,7 +53,23 @@ def print_profiles(profiles):
 def print_statistics(statistics):
     print(f'{"PROFILE":20} {"RECEIVED":>16} {"SENT":>16} {"HANDSHAKE":>12}')
     for name, received, sent, handshake in statistics:
-        print(f'{name:20} {received:>16} {sent:>16} {handshake:>12}')
+        received_size = GLib.format_size(max(0, received))
+        sent_size = GLib.format_size(max(0, sent))
+        handshake_age = format_handshake(handshake)
+        print(f'{name:20} {received_size:>16} {sent_size:>16} {handshake_age:>12}')
+
+
+def format_handshake(timestamp):
+    if timestamp <= 0:
+        return '—'
+    seconds = max(0, int(time.time()) - timestamp)
+    if seconds < 60:
+        return f'{seconds} с назад'
+    if seconds < 3600:
+        return f'{seconds // 60} мин назад'
+    if seconds < 86400:
+        return f'{seconds // 3600} ч назад'
+    return f'{seconds // 86400} д назад'
 
 
 def main(argv):

@@ -9,6 +9,8 @@ Fri Sep 04 18:45:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
   DNS_BACKEND=auto|resolved|netconfig|none override.
 - Persist the backend together with the selected profile so removal and
   backend changes revert the correct integration.
+- Format transfer totals and handshake age in human-readable units in
+  amneziactl stats.
 
 -------------------------------------------------------------------
 Thu Sep 03 23:58:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>

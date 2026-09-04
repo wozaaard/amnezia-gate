@@ -155,8 +155,9 @@ list_output=$("$project_dir/client/amneziactl" list)
 grep -q 'active/running' <<<"$list_output"
 
 statistics_output=$("$project_dir/client/amneziactl" stats)
-grep -Eq '^london[[:space:]]+5678[[:space:]]+1234[[:space:]]+1700000000$' \
-    <<<"$statistics_output"
+grep -Fq '5.7' <<<"$statistics_output"
+grep -Fq '1.2' <<<"$statistics_output"
+grep -Eq '[[:digit:]]+ д назад$' <<<"$statistics_output"
 
 gdbus call --session --dest org.amnezia.Gate1 \
     --object-path /org/amnezia/Gate1 \
