@@ -24,7 +24,7 @@ TESTING = os.getenv('AMNEZIA_GATE_TESTING') == '1'
 BUS_TYPE = Gio.BusType.SESSION if os.getenv('AMNEZIA_GATE_BUS') == 'session' else Gio.BusType.SYSTEM
 PROFILE_ROOT = os.getenv('AMNEZIA_PROFILE_ROOT', '/etc/amnezia/profiles')
 BACKEND = os.getenv('AMNEZIA_GATE_PROFILE_BIN', '/usr/libexec/amnezia-gate-profile')
-DNS_BACKEND = os.getenv('AMNEZIA_DNS_BACKEND', '/usr/libexec/amnezia-gate-resolved')
+DNS_BACKEND = os.getenv('AMNEZIA_DNS_BACKEND', '/usr/libexec/amnezia-gate-dns')
 SYSTEMCTL = os.getenv('SYSTEMCTL_BIN', '/usr/bin/systemctl')
 UAPI_ROOT = os.getenv('AMNEZIA_GATE_UAPI_ROOT', '/run/amnezia-gate/profiles')
 INTERFACE_FILE = os.getenv(
@@ -37,7 +37,11 @@ def run(argv):
     process = subprocess.run(argv, capture_output=True, text=True, check=False)
     if process.returncode != 0:
         message = process.stderr.strip() or process.stdout.strip() or f'{argv[0]} failed'
-        raise RuntimeError(re.sub(r'^(?:amnezia-gate-profile|amnezia-gate-resolved):\s*', '', message))
+        raise RuntimeError(re.sub(
+            r'^(?:amnezia-gate-profile|amnezia-gate-dns|amnezia-gate-resolved|amnezia-gate-netconfig):\s*',
+            '',
+            message,
+        ))
     return process.stdout
 
 
@@ -50,12 +54,23 @@ def validate_name(name):
 
 
 def dns_backend():
-    return 'resolved' if os.access(DNS_BACKEND, os.X_OK) else ''
+    if not os.access(DNS_BACKEND, os.X_OK):
+        return ''
+    return run([DNS_BACKEND, 'backend']).strip()
+
+
+def dns_mode():
+    if not dns_backend():
+        return ''
+    return run([DNS_BACKEND, 'mode']).strip()
 
 
 def require_dns_backend():
-    if not dns_backend():
+    if not os.access(DNS_BACKEND, os.X_OK):
         raise RuntimeError('DNS backend is not installed')
+    if not dns_backend():
+        run([DNS_BACKEND, 'check'])
+        raise RuntimeError('DNS backend is not operational')
 
 
 def environment_value(text, name):
@@ -234,6 +249,8 @@ class Manager:
                 invocation.return_value(GLib.Variant('(a(sttt))', (self.statistics(),)))
             elif method_name == 'GetDnsBackend':
                 invocation.return_value(GLib.Variant('(s)', (dns_backend(),)))
+            elif method_name == 'GetDnsMode':
+                invocation.return_value(GLib.Variant('(s)', (dns_mode(),)))
             elif method_name == 'GetDnsProfile':
                 invocation.return_value(GLib.Variant('(ss)', self.dns_status()))
             elif method_name == 'CheckDnsIntegration':

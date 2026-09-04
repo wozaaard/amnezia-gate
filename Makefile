@@ -18,7 +18,7 @@ METAINFO_DIR ?= /usr/share/metainfo
 ICON_DIR ?= /usr/share/icons/hicolor/scalable/apps
 SELINUX_PACKAGE_DIR ?= /usr/share/selinux/packages/targeted
 
-.PHONY: rootfs selinux source rpm test smoke install install-resolved install-selinux
+.PHONY: rootfs selinux source rpm test smoke install install-resolved install-netconfig install-selinux
 
 KIWI_SOURCES := $(shell find kiwi -type f -print)
 
@@ -55,6 +55,7 @@ test: selinux
 	bash tests/test-import.sh
 	bash tests/test-runner.sh
 	bash tests/test-dns.sh
+	bash tests/test-netconfig.sh
 	bash tests/test-dbus.sh
 
 smoke:
@@ -64,6 +65,7 @@ install:
 	install -D -m 0755 host/amnezia-gate-profile $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-profile
 	install -D -m 0755 host/amnezia-gate-run $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-run
 	install -D -m 0755 host/amnezia-gate-network $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-network
+	install -D -m 0755 host/amnezia-gate-dns $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-dns
 	install -D -m 0755 daemon/amnezia-gate-daemon $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-daemon
 	install -D -m 0755 client/amneziactl $(DESTDIR)$(PREFIX)/bin/amneziactl
 	install -D -m 0755 gui/org.amnezia.Gate $(DESTDIR)$(PREFIX)/bin/org.amnezia.Gate
@@ -91,6 +93,9 @@ install-resolved:
 	install -D -m 0644 systemd/systemd-resolved.service.d/amnezia-gate-resolved.conf \
 		$(DESTDIR)$(SYSTEMD_UNIT_DIR)/systemd-resolved.service.d/amnezia-gate-resolved.conf
 	@if test -z "$(DESTDIR)"; then systemctl daemon-reload; fi
+
+install-netconfig:
+	install -D -m 0755 host/amnezia-gate-netconfig $(DESTDIR)$(PREFIX)/libexec/amnezia-gate-netconfig
 
 install-selinux: selinux
 	install -D -m 0644 $(SELINUX_MODULE) $(DESTDIR)$(SELINUX_PACKAGE_DIR)/amnezia_gate.pp

@@ -5,7 +5,7 @@ ConditionPathExists=/etc/amnezia/dns-profile
 
 [Service]
 Type=oneshot
-ExecStart=/usr/libexec/amnezia-gate-resolved restore
+ExecStart=/usr/libexec/amnezia-gate-dns restore-backend resolved
 NoNewPrivileges=yes
 ProtectHome=yes
 ProtectSystem=strict

@@ -89,36 +89,69 @@ Bootstrap-серверы из `DNS` импортируемого AWG-конфи�
 DNS_TLS_SERVERS=9.9.9.9@853#dns.quad9.net,149.112.112.112@853#dns.quad9.net
 ```
 
-Опциональный backend `amnezia-gate-resolved` позволяет направить системный DNS
-хоста в один явно выбранный профиль:
+Опциональные backends `amnezia-gate-resolved` и `amnezia-gate-netconfig`
+позволяют направить системный DNS хоста в один явно выбранный профиль:
 
 ```bash
 amneziactl dns check
+amneziactl dns backend
+amneziactl dns mode
 amneziactl dns use tallin
 amneziactl dns status
 amneziactl dns off
 ```
 
-Backend использует напрямую D-Bus API `systemd-resolved`: для `azNh`
-регистрируются guest resolver и catch-all routing domain `~.`. NetworkManager,
-wicked и systemd-networkd не вызываются и не конфигурируются. Выбор хранится в
-`/etc/amnezia/dns-profile`, восстанавливается при следующем старте профиля и
-сбрасывается при его удалении. Отдельный oneshot unit восстанавливает per-link
-настройки после перезапуска `systemd-resolved`. Если backend не установлен,
-GNOME application не показывает действия для системного DNS.
+`amnezia-gate-resolved` использует D-Bus API `systemd-resolved`: для `azNh`
+регистрируются guest resolver и catch-all routing domain `~.`. Отдельный
+oneshot unit восстанавливает его volatile per-link state после перезапуска
+`systemd-resolved`.
+
+`amnezia-gate-netconfig` регистрирует `azNh` и его resolver через штатный
+`netconfig modify` как service `amnezia-gate-vpn`. Режим определяется по
+`NETCONFIG_DNS_FORWARDER`: при `resolver` проверяется порядок nameserver в
+управляемом netconfig `resolv.conf`, при `dnsmasq` — порядок upstream в
+`/run/dnsmasq-forwarders.conf`. Стандартный ranking `+/vpn/` помещает resolver
+профиля первым, а `netconfig remove` восстанавливает предыдущую конфигурацию.
+Режим отображается командой `amneziactl dns mode`, в `dns status` и в GNOME
+application. `bind` и неизвестные forwarder mode не поддерживаются.
+
+Общий dispatcher хранит backend и профиль в `/etc/amnezia/dns-profile`.
+Выбор восстанавливается при следующем старте профиля и сбрасывается при его
+удалении. Если operational backend отсутствует, GNOME application не показывает
+действия для системного DNS.
 
 Уже запущенный контейнер продолжает использовать rootfs, с которым он был
 создан. После обновления с версии без встроенного resolver такой профиль нужно
-перезапустить. `amnezia-gate-resolved` проверяет доступность TCP/53 перед выбором и
-не публикует `~.`, пока новый resolver не отвечает, поэтому старый контейнер не
-превращает системный DNS в black hole.
+перезапустить. Dispatcher проверяет доступность TCP/53 перед выбором и не
+публикует resolver, пока он не отвечает, поэтому старый контейнер не превращает
+системный DNS в black hole.
 
-Функция доступна, только если `systemd-resolved` уже является системным
-resolver: его service отвечает, а `/etc/resolv.conf` использует stub
-`127.0.0.53`. Backend не включает `systemd-resolved` и не меняет ownership
-`/etc/resolv.conf`. При остановке выбранного профиля его per-link DNS исчезает,
-но выбор сохраняется; до следующего старта действует штатный DNS fallback
-хоста. Strict/fail-closed host mode пока не реализован.
+Backend определяется по фактическому owner системного DNS. Для `resolved` его
+service должен отвечать, а `/etc/resolv.conf` — использовать stub
+`127.0.0.53`. Для `netconfig` файл должен принадлежать netconfig, DNS policy
+должна быть включена, а forwarder — находиться в режиме `resolver` или
+`dnsmasq`. Пакеты не меняют ownership `/etc/resolv.conf`.
+
+Режим задаётся в `/etc/amnezia/profiles.conf`:
+
+```bash
+DNS_BACKEND=auto       # auto | resolved | netconfig | none
+```
+
+`auto` выбирает единственный operational backend. Если оба backend считают
+себя operational, dispatcher требует явного `resolved` или `netconfig` вместо
+скрытого приоритета. Явный режим не переключается на другой backend при ошибке.
+При смене режима сохранённый owner позволяет корректно удалить старую
+интеграцию при следующем `dns use` или `dns off`.
+
+При остановке выбранного профиля его DNS исчезает, но выбор сохраняется; до
+следующего старта действует штатный DNS fallback хоста. В режиме netconfig
+`resolver` остальные nameservers остаются fallback после профильного resolver.
+В режиме `dnsmasq` upstream также ранжируются netconfig и остаются fallback
+внутри forwarder. `NETCONFIG_DNS_FORWARDER_FALLBACK=no` дополнительно исключает
+прямой обход локального forwarder через `resolv.conf`, но не удаляет upstream
+из `/run/dnsmasq-forwarders.conf`. Strict/fail-closed host mode пока не
+реализован.
 
 Для openSUSE интеграцию можно подготовить явно:
 
@@ -132,6 +165,19 @@ amneziactl dns check
 Перед заменой `/etc/resolv.conf` следует сохранить его текущую версию. Пакет
 `amnezia-gate-resolved` устанавливает нужную зависимость, но не выполняет эти
 системные изменения сам.
+
+На машине с wicked и штатным netconfig достаточно:
+
+```bash
+sudo zypper --no-refresh install amnezia-gate-netconfig
+amneziactl dns check
+amneziactl dns backend
+amneziactl dns mode
+```
+
+Для существующей конфигурации с локальным dnsmasq backend выбирает forwarder
+mode автоматически. `dnsmasq` должен использовать сгенерированный netconfig
+файл `/run/dnsmasq-forwarders.conf` как `resolv-file`.
 
 ## Сборка RPM
 
@@ -151,22 +197,23 @@ make rpm
 ```text
 _build/rpmbuild/RPMS/x86_64/amnezia-gate-0.3.0-0.x86_64.rpm
 _build/rpmbuild/RPMS/noarch/amnezia-gate-resolved-0.3.0-0.noarch.rpm
+_build/rpmbuild/RPMS/noarch/amnezia-gate-netconfig-0.3.0-0.noarch.rpm
 _build/rpmbuild/RPMS/noarch/amnezia-gate-gnome-0.3.0-0.noarch.rpm
 _build/rpmbuild/RPMS/noarch/amnezia-gate-selinux-0.3.0-0.noarch.rpm
 ```
 
 `amnezia-gate` содержит service, CLI и container image. Опциональное GNOME
 приложение вместе с GTK/libadwaita dependencies вынесено в
-`amnezia-gate-gnome`. Интеграция системного DNS вынесена в
-`amnezia-gate-resolved`. SELinux policy находится в `amnezia-gate-selinux`; zypper
+`amnezia-gate-gnome`. Интеграция системного DNS вынесена в backends
+`amnezia-gate-resolved` и `amnezia-gate-netconfig`. SELinux policy находится в
+`amnezia-gate-selinux`; zypper
 установит его вместе с основным пакетом, если в системе есть
 `selinux-policy-base`.
 
-Основной пакет рекомендует `amnezia-gate-resolved`, только когда в системе уже
-есть `systemd-resolved`. Поэтому стандартная установка zypper добавляет backend
-на подготовленной системе, но не затягивает новый системный resolver туда, где
-он не используется. Явная установка `amnezia-gate-resolved` по-прежнему
-установит `systemd-resolved` как обязательную зависимость backend.
+Основной пакет условно рекомендует соответствующие backends при наличии
+`systemd-resolved` и `sysconfig-netconfig`. Поэтому zypper может установить оба
+пакета, а runtime dispatcher выберет фактического owner. Явная установка
+backend по-прежнему установит его системную зависимость.
 
 Rootfs декларативно собирается KIWI из `repo-oss` и AmneziaWG repository.
 Описание находится в `kiwi/config.xml`; вместе с squashfs сохраняются KIWI
@@ -253,8 +300,9 @@ Importer:
 systemd units:
 
 ```bash
-rpm -q amnezia-gate amnezia-gate-resolved amnezia-gate-gnome
+rpm -q amnezia-gate amnezia-gate-resolved amnezia-gate-netconfig amnezia-gate-gnome
 amneziactl list
+amneziactl dns backend
 amneziactl dns status
 systemctl --no-pager --full status \
   amnezia-gate-daemon.service \
@@ -312,8 +360,9 @@ private и preshared keys. Приведённые выше команды клю
 ## Ограничения
 
 - Outer endpoint пока должен резолвиться в IPv4.
-- Системная DNS-интеграция требует заранее настроенный `systemd-resolved` stub;
-  автоматическая настройка netconfig/dnsmasq пока отсутствует.
+- Системная DNS-интеграция требует заранее настроенный `systemd-resolved` stub
+  либо netconfig в режиме `resolver`/`dnsmasq`. В forwarder mode dnsmasq должен
+  использовать `/run/dnsmasq-forwarders.conf`.
 - Наружу публикуются TCP SOCKS5 и HTTP proxy. SOCKS5 UDP ASSOCIATE потребует
   отдельного диапазона UDP relay ports.
 - Существующие `awg-quick@*`, `awg-sock@*` и `tinyproxy.service` автоматически

@@ -17,7 +17,7 @@ nft_bin=${NFT_BIN:-/usr/sbin/nft}
 iptables_bin=${IPTABLES_BIN:-/usr/sbin/iptables}
 nspawn_bin=${NSPAWN_BIN:-/usr/bin/systemd-nspawn}
 nspawn_register=${NSPAWN_REGISTER:-yes}
-dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-resolved}
+dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-dns}
 
 profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}
 profile_dir="$profile_root/$profile"

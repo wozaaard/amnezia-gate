@@ -17,6 +17,8 @@ def usage():
   amneziactl list
   amneziactl stats
   amneziactl dns status
+  amneziactl dns backend
+  amneziactl dns mode
   amneziactl dns check
   amneziactl dns use PROFILE
   amneziactl dns off
@@ -73,11 +75,22 @@ def main(argv):
         print_statistics(statistics)
     elif command == 'dns':
         operation = arguments.pop(0) if arguments else None
+        if operation == 'backend' and not arguments:
+            backend, = call(connection, 'GetDnsBackend', None, '(s)')
+            print(backend or '-')
+            return 0
+        if operation == 'mode' and not arguments:
+            mode, = call(connection, 'GetDnsMode', None, '(s)')
+            print(mode or '-')
+            return 0
         if operation == 'status' and not arguments:
             profile, state = call(connection, 'GetDnsProfile', None, '(ss)')
+            mode, = call(connection, 'GetDnsMode', None, '(s)')
         elif operation == 'check' and not arguments:
             call(connection, 'CheckDnsIntegration', None, '()')
-            print('DNS integration is ready')
+            backend, = call(connection, 'GetDnsBackend', None, '(s)')
+            mode, = call(connection, 'GetDnsMode', None, '(s)')
+            print(f'DNS integration is ready: {backend}/{mode}')
             return 0
         elif operation == 'use' and len(arguments) == 1:
             profile, state = call(
@@ -86,6 +99,7 @@ def main(argv):
                 GLib.Variant('(s)', (arguments[0],)),
                 '(ss)',
             )
+            mode, = call(connection, 'GetDnsMode', None, '(s)')
         elif operation == 'off' and not arguments:
             profile, state = call(
                 connection,
@@ -93,10 +107,11 @@ def main(argv):
                 GLib.Variant('(s)', ('',)),
                 '(ss)',
             )
+            mode, = call(connection, 'GetDnsMode', None, '(s)')
         else:
-            raise RuntimeError('dns requires check, status, use PROFILE or off')
-        print(f'{"PROFILE":20} STATE')
-        print(f'{(profile or "-"):20} {state}')
+            raise RuntimeError('dns requires backend, mode, check, status, use PROFILE or off')
+        print(f'{"PROFILE":20} {"MODE":12} STATE')
+        print(f'{(profile or "-"):20} {(mode or "-"):12} {state}')
     elif command == 'status':
         if len(arguments) != 1:
             raise RuntimeError('status requires PROFILE')

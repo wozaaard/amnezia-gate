@@ -29,6 +29,7 @@ class GateApplication extends Adw.Application {
         this._statisticsPending = false;
         this._statisticsSource = 0;
         this._dnsBackend = '';
+        this._dnsMode = '';
         this._dnsButton = null;
         this._dnsButtonLabel = null;
         this._dnsMenu = null;
@@ -366,9 +367,10 @@ class GateApplication extends Adw.Application {
             ([backend]) => {
                 this._dnsBackend = backend;
                 if (backend !== '') {
-                    this._refreshDns();
+                    this._refreshDnsMode();
                     return;
                 }
+                this._dnsMode = '';
                 this._dnsProfile = '';
                 this._dnsState = 'off';
                 this._updateDnsControl();
@@ -376,10 +378,26 @@ class GateApplication extends Adw.Application {
             },
             () => {
                 this._dnsBackend = '';
+                this._dnsMode = '';
                 this._dnsProfile = '';
                 this._dnsState = 'unavailable';
                 this._updateDnsControl();
                 this._refreshProfiles();
+            },
+            false);
+    }
+
+    _refreshDnsMode() {
+        this._call(
+            'GetDnsMode',
+            null,
+            ([mode]) => {
+                this._dnsMode = mode;
+                this._refreshDns();
+            },
+            () => {
+                this._dnsMode = '';
+                this._refreshDns();
             },
             false);
     }
@@ -411,11 +429,17 @@ class GateApplication extends Adw.Application {
         if (!available)
             return;
 
-        let label = 'DNS: выкл.';
+        const modeLabel = {
+            resolved: 'resolved',
+            resolver: 'direct',
+            dnsmasq: 'dnsmasq',
+        }[this._dnsMode] ?? this._dnsMode;
+        const modeSuffix = modeLabel === '' ? '' : ` · ${modeLabel}`;
+        let label = `DNS: выкл.${modeSuffix}`;
         if (this._dnsProfile !== '')
-            label = `DNS: ${this._dnsProfile}`;
+            label = `DNS: ${this._dnsProfile}${modeSuffix}`;
         else if (this._dnsState === 'unavailable')
-            label = 'DNS: ошибка';
+            label = `DNS: ошибка${modeSuffix}`;
         this._dnsButtonLabel.set_label(label);
         this._dnsButton.set_sensitive(!this._dnsPending);
         this._dnsButton.remove_css_class('suggested-action');
@@ -425,12 +449,14 @@ class GateApplication extends Adw.Application {
         else if (this._dnsState === 'unavailable')
             this._dnsButton.add_css_class('destructive-action');
 
-        const tooltip = {
+        let tooltip = {
             active: `Системный DNS через профиль ${this._dnsProfile}`,
             waiting: `Профиль ${this._dnsProfile} выбран; ожидается его запуск`,
             unavailable: 'DNS backend или resolver выбранного профиля недоступен',
             off: 'Системный DNS через Amnezia Gate отключён',
         }[this._dnsState] ?? 'Системный DNS через Amnezia Gate';
+        if (this._dnsMode !== '')
+            tooltip += `; backend ${this._dnsBackend}, режим ${this._dnsMode}`;
         this._dnsButton.set_tooltip_text(tooltip);
 
         for (let child = this._dnsMenu.get_first_child(); child !== null;

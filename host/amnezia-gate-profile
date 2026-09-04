@@ -5,7 +5,7 @@ profile_root=${AMNEZIA_PROFILE_ROOT:-/etc/amnezia/profiles}
 global_config=${AMNEZIA_PROFILE_CONFIG:-/etc/amnezia/profiles.conf}
 systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
 ss_bin=${SS_BIN:-ss}
-dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-resolved}
+dns_backend=${AMNEZIA_DNS_BACKEND:-/usr/libexec/amnezia-gate-dns}
 
 ROOTFS_IMAGE=/usr/lib/amnezia-gate/rootfs.squashfs
 NETWORK_PREFIX=10.231

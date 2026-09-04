@@ -1,0 +1,115 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+
+die() {
+    printf 'amnezia-gate-netconfig: %s\n' "$*" >&2
+    exit 1
+}
+
+netconfig_bin=${NETCONFIG_BIN:-/usr/sbin/netconfig}
+systemctl_bin=${SYSTEMCTL_BIN:-/usr/bin/systemctl}
+resolv_conf=${AMNEZIA_RESOLV_CONF:-/etc/resolv.conf}
+netconfig_resolv_conf=${AMNEZIA_NETCONFIG_RESOLV_CONF:-/run/netconfig/resolv.conf}
+dnsmasq_forwarders=${AMNEZIA_NETCONFIG_DNSMASQ_FORWARDERS:-/run/dnsmasq-forwarders.conf}
+network_config=${AMNEZIA_NETWORK_CONFIG:-/etc/sysconfig/network/config}
+service_name=amnezia-gate-vpn
+
+config_value() {
+    local key=$1 value
+    value=$(sed -n -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*['\"]?([^'\"]*)['\"]?[[:space:]]*$/\\1/p" \
+        "$network_config" | tail -n 1)
+    printf '%s' "$value"
+}
+
+netconfig_mode() {
+    local forwarder
+    forwarder=$(config_value NETCONFIG_DNS_FORWARDER)
+    case $forwarder in
+        ''|resolver) printf '%s\n' resolver ;;
+        dnsmasq) printf '%s\n' dnsmasq ;;
+        *) die "unsupported NETCONFIG_DNS_FORWARDER: $forwarder" ;;
+    esac
+}
+
+check_netconfig() {
+    [[ -x $netconfig_bin ]] || die "netconfig is unavailable: $netconfig_bin"
+    [[ -r $network_config ]] || die "$network_config is not readable"
+    local mode
+    mode=$(netconfig_mode)
+    if [[ ${AMNEZIA_DNS_SKIP_SYSTEM_CHECK:-0} != 1 ]]; then
+        [[ -r $resolv_conf ]] || die "$resolv_conf is not readable"
+        local owner policy
+        owner=$(readlink -f "$resolv_conf" 2>/dev/null || true)
+        if [[ $owner != "$netconfig_resolv_conf" ]] &&
+           ! grep -Eqi 'generated.*netconfig|netconfig.*generated' "$resolv_conf"; then
+            die 'system resolver is not managed by netconfig'
+        fi
+        if [[ $mode == dnsmasq ]]; then
+            local system_nameserver
+            [[ -x $systemctl_bin ]] || die "systemctl is unavailable: $systemctl_bin"
+            "$systemctl_bin" is-active --quiet dnsmasq.service ||
+                die 'dnsmasq forwarder is unavailable'
+            system_nameserver=$(awk '/^[[:space:]]*nameserver[[:space:]]+/ { print $2; exit }' \
+                "$resolv_conf")
+            [[ -z $system_nameserver || $system_nameserver == 127.* || $system_nameserver == ::1 ]] ||
+                die 'system resolver does not use the local dnsmasq forwarder'
+        fi
+        policy=$(config_value NETCONFIG_DNS_POLICY)
+        [[ -n $policy ]] || die 'NETCONFIG_DNS_POLICY disables DNS updates'
+    fi
+}
+
+validate_arguments() {
+    [[ ${1:-} =~ ^az[0-9]+h$ ]] || die "invalid DNS interface: ${1:-}"
+    [[ ${2:-} =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] ||
+        die "invalid DNS address: ${2:-}"
+}
+
+nameserver_file() {
+    case $(netconfig_mode) in
+        resolver) printf '%s\n' "$resolv_conf" ;;
+        dnsmasq) printf '%s\n' "$dnsmasq_forwarders" ;;
+    esac
+}
+
+first_nameserver() {
+    awk '/^[[:space:]]*nameserver[[:space:]]+/ { print $2; exit }' "$(nameserver_file)"
+}
+
+apply_dns() {
+    local interface=${1:-} address=${2:-}
+    validate_arguments "$interface" "$address"
+    check_netconfig
+    printf "INTERFACE='%s'\nDNSSERVERS='%s'\n" "$interface" "$address" |
+        "$netconfig_bin" modify -s "$service_name" -i "$interface" -m dns
+    if [[ ${AMNEZIA_DNS_SKIP_SYSTEM_CHECK:-0} != 1 ]] &&
+       [[ $(first_nameserver) != "$address" ]]; then
+        "$netconfig_bin" remove -s "$service_name" -i "$interface" -m dns >/dev/null 2>&1 || true
+        die "netconfig did not make $address the preferred nameserver in $(nameserver_file)"
+    fi
+}
+
+revert_dns() {
+    local interface=${1:-}
+    [[ $interface =~ ^az[0-9]+h$ ]] || die "invalid DNS interface: $interface"
+    [[ -x $netconfig_bin ]] || return 0
+    "$netconfig_bin" remove -s "$service_name" -i "$interface" -m dns >/dev/null 2>&1 || true
+}
+
+active_dns() {
+    local interface=${1:-} address=${2:-}
+    validate_arguments "$interface" "$address"
+    check_netconfig
+    [[ $(first_nameserver) == "$address" ]]
+}
+
+command=${1:-}
+shift || true
+case $command in
+    check) [[ $# -eq 0 ]] || die 'check does not accept arguments'; check_netconfig ;;
+    mode) [[ $# -eq 0 ]] || die 'mode does not accept arguments'; check_netconfig; netconfig_mode ;;
+    apply) [[ $# -eq 2 ]] || die 'apply requires INTERFACE ADDRESS'; apply_dns "$@" ;;
+    revert) [[ $# -eq 1 ]] || die 'revert requires INTERFACE'; revert_dns "$@" ;;
+    active) [[ $# -eq 2 ]] || die 'active requires INTERFACE ADDRESS'; active_dns "$@" ;;
+    *) die 'usage: amnezia-gate-netconfig check|mode|apply INTERFACE ADDRESS|revert INTERFACE|active INTERFACE ADDRESS' ;;
+esac

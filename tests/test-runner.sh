@@ -147,7 +147,7 @@ grep -Fqx 'Allow 10.231.1.4/30' "$test_dir/profiles/London/tinyproxy.conf"
 grep -Fqx 'Allow 192.168.50.0/24' "$test_dir/profiles/London/tinyproxy.conf"
 
 # The post-start hook waits until the container resolver accepts TCP before
-# publishing it through systemd-resolved. A closed test port only produces a
+# publishing it through the selected DNS backend. A closed test port only produces a
 # warning and must not fail the VPN profile.
 "$project_dir/host/amnezia-gate-run" sync-dns London 2>"$test_dir/dns-warning.log"
 grep -Fq 'DNS resolver did not become ready for London' "$test_dir/dns-warning.log"

@@ -97,8 +97,12 @@ export AMNEZIA_PROFILE_TESTING=1
 export AMNEZIA_GATE_BUS=session
 export AMNEZIA_GATE_INTERFACE_FILE="$project_dir/dbus/org.amnezia.Gate1.xml"
 export AMNEZIA_GATE_PROFILE_BIN="$project_dir/host/amnezia-gate-profile"
+ln -s "$project_dir/host/amnezia-gate-dns" "$test_root/bin/amnezia-gate-dns"
 ln -s "$project_dir/host/amnezia-gate-resolved" "$test_root/bin/amnezia-gate-resolved"
-export AMNEZIA_DNS_BACKEND="$test_root/bin/amnezia-gate-resolved"
+export AMNEZIA_DNS_BACKEND="$test_root/bin/amnezia-gate-dns"
+export AMNEZIA_RESOLVED_BACKEND="$test_root/bin/amnezia-gate-resolved"
+export AMNEZIA_NETCONFIG_BACKEND="$test_root/bin/amnezia-gate-netconfig"
+export AMNEZIA_DNS_BACKEND_MODE=auto
 export AMNEZIA_PROFILE_ROOT="$test_root/profiles"
 export AMNEZIA_DNS_STATE_FILE="$test_root/dns-profile"
 export AMNEZIA_DNS_SKIP_SYSTEM_CHECK=1
@@ -158,12 +162,18 @@ gdbus call --session --dest org.amnezia.Gate1 \
     --object-path /org/amnezia/Gate1 \
     --method org.amnezia.Gate1.Manager.GetDnsBackend |
     grep -Fq "'resolved'"
+gdbus call --session --dest org.amnezia.Gate1 \
+    --object-path /org/amnezia/Gate1 \
+    --method org.amnezia.Gate1.Manager.GetDnsMode |
+    grep -Fq "'resolved'"
+[[ $("$project_dir/client/amneziactl" dns backend) == resolved ]]
+[[ $("$project_dir/client/amneziactl" dns mode) == resolved ]]
 dns_output=$("$project_dir/client/amneziactl" dns status)
-grep -Eq '^-[[:space:]]+off$' <<<"$dns_output"
+grep -Eq '^-[[:space:]]+resolved[[:space:]]+off$' <<<"$dns_output"
 "$project_dir/client/amneziactl" dns check |
-    grep -Fqx 'DNS integration is ready'
+    grep -Fqx 'DNS integration is ready: resolved/resolved'
 dns_output=$("$project_dir/client/amneziactl" dns use london)
-grep -Eq '^london[[:space:]]+waiting$' <<<"$dns_output"
+grep -Eq '^london[[:space:]]+resolved[[:space:]]+waiting$' <<<"$dns_output"
 
 "$project_dir/client/amneziactl" restart london
 grep -q '^reset-failed amnezia-gate@london.service$' "$test_root/systemctl.log"
@@ -178,6 +188,8 @@ gdbus call --session --dest org.amnezia.Gate1 \
     --object-path /org/amnezia/Gate1 \
     --method org.amnezia.Gate1.Manager.GetDnsBackend |
     grep -Fq "''"
+[[ $("$project_dir/client/amneziactl" dns backend) == - ]]
+[[ $("$project_dir/client/amneziactl" dns mode) == - ]]
 if "$project_dir/client/amneziactl" dns status; then
     echo 'D-Bus API accepted DNS operation without a backend' >&2
     exit 1

@@ -39,6 +39,7 @@ Requires:       systemd-container
 Requires:       typelib-1_0-Polkit-1_0
 Requires:       (%{name}-selinux if selinux-policy-base)
 Recommends:     (amnezia-gate-resolved if systemd-resolved)
+Recommends:     (amnezia-gate-netconfig if sysconfig-netconfig)
 %{?systemd_requires}
 %add_sysuser g amnezia - -
 
@@ -71,6 +72,17 @@ Provides optional system DNS routing through a selected Amnezia Gate profile
 and restores the volatile systemd-resolved per-link configuration after the
 resolver service is restarted.
 
+%package -n amnezia-gate-netconfig
+Summary:        netconfig backend for Amnezia Gate
+BuildArch:      noarch
+Requires:       %{name} = %{version}-%{release}
+Requires:       sysconfig-netconfig
+
+%description -n amnezia-gate-netconfig
+Provides optional system DNS routing through a selected Amnezia Gate profile
+on systems where wicked and netconfig manage resolv.conf directly or through
+a dnsmasq forwarder.
+
 %package gnome
 Summary:        GNOME application for managing Amnezia Gate profiles
 BuildArch:      noarch
@@ -97,6 +109,8 @@ desktop-file-validate gui/org.amnezia.Gate.desktop
 make install \
     DESTDIR=%{buildroot}
 make install-resolved \
+    DESTDIR=%{buildroot}
+make install-netconfig \
     DESTDIR=%{buildroot}
 make install-selinux \
     DESTDIR=%{buildroot} \
@@ -132,12 +146,17 @@ install -D -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/%{name}/rootfs.verified
 
 %preun -n amnezia-gate-resolved
 if [ "$1" -eq 0 ]; then
-    %{_libexecdir}/amnezia-gate-resolved off || :
+    %{_libexecdir}/amnezia-gate-dns remove-backend resolved || :
 fi
 %service_del_preun amnezia-gate-resolved-restore.service
 
 %postun -n amnezia-gate-resolved
 %service_del_postun_without_restart amnezia-gate-resolved-restore.service
+
+%preun -n amnezia-gate-netconfig
+if [ "$1" -eq 0 ]; then
+    %{_libexecdir}/amnezia-gate-dns remove-backend netconfig || :
+fi
 
 %pre selinux
 %selinux_relabel_pre -s %{selinuxtype}
@@ -162,6 +181,7 @@ fi
 %{_libexecdir}/amnezia-gate-profile
 %{_libexecdir}/amnezia-gate-network
 %{_libexecdir}/amnezia-gate-run
+%{_libexecdir}/amnezia-gate-dns
 %{_libexecdir}/amnezia-gate-daemon
 %{_unitdir}/amnezia-gate@.service
 %{_unitdir}/amnezia-gate-daemon.service
@@ -189,6 +209,9 @@ fi
 %{_unitdir}/amnezia-gate-resolved-restore.service
 %dir %{_unitdir}/systemd-resolved.service.d
 %{_unitdir}/systemd-resolved.service.d/amnezia-gate-resolved.conf
+
+%files -n amnezia-gate-netconfig
+%{_libexecdir}/amnezia-gate-netconfig
 
 %files selinux
 %dir %{_datadir}/selinux/packages/%{selinuxtype}

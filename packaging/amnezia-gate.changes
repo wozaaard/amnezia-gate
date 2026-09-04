@@ -1,4 +1,16 @@
 -------------------------------------------------------------------
+Fri Sep 04 18:45:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
+
+- Add a netconfig DNS backend for wicked-managed hosts.
+- Select direct resolver or dnsmasq forwarder integration from
+  NETCONFIG_DNS_FORWARDER and expose the effective DNS mode through D-Bus,
+  amneziactl and the GNOME application.
+- Select DNS integration by operational ownership, with an explicit
+  DNS_BACKEND=auto|resolved|netconfig|none override.
+- Persist the backend together with the selected profile so removal and
+  backend changes revert the correct integration.
+
+-------------------------------------------------------------------
 Thu Sep 03 23:58:00 UTC 2026 - Wozaaard! <cin.sourcer@gmail.com>
 
 - Bump version to 0.3.0.
